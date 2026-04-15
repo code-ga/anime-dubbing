@@ -1,5 +1,5 @@
 import ffmpeg from "fluent-ffmpeg";
-import { logger } from "../src/utils/logger";
+import { logger } from "../utils/logger";
 
 export async function convertToWav(inputPath: string, outputPath: string) {
 	return new Promise<string>((resolve, reject) => {
@@ -17,7 +17,7 @@ export async function convertToWav(inputPath: string, outputPath: string) {
 			})
 			.on("end", () => {
 				logger.info(`Finished processing! Audio saved to: ${outputPath}`);
-        resolve(outputPath);
+				resolve(outputPath);
 			})
 			.save(outputPath);
 	});

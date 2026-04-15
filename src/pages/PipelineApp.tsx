@@ -8,6 +8,7 @@ import { LogViewer } from "../components/LogViewer";
 import { PipelineProgress } from "../components/PipelineProgress";
 import { runPipeline, type PipelineArgs } from "../utils/pipelineRunner";
 import { logger, setLogCallback } from "../utils/logger";
+import { ReplicateUtil } from "../class/replicate";
 
 export interface PipelineAppProps {
 	pipeline: Pipeline<any, any>;
@@ -57,6 +58,7 @@ export function PipelineApp({ pipeline, input, outputFile, args = {}, onCancel }
 			args: {
 				outputFile,
 				...args,
+				replicateUtil: new ReplicateUtil(), // Pass ReplicateUtil instance to pipeline steps
 			},
 		};
 

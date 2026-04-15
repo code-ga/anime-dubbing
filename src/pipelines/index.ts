@@ -1,1 +1,1 @@
-export { default as audioExtractionPipeline } from "./audioExtraction";
+export { default as dubbingPipeline } from "./dubbing";
