@@ -3,6 +3,7 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText } from "ai";
 import Replicate from "replicate";
 import { logger } from "../utils/logger";
+import { detectVoiceMetadataForMinimax } from "../utils/voice";
 
 export interface TranscriptionOutput {
 	end: number;
@@ -24,6 +25,70 @@ interface ReplicateWhisperOutput {
 	chunks: { text: string; timestamp: [number, number] }[];
 	text: string;
 }
+
+const qwenTtsSupportedLanguages = [
+	"en",
+	"ja",
+	"ko",
+	"zh",
+	"es",
+	"fr",
+	"de",
+	"it",
+	"pt",
+	"ru",
+	"ar",
+	"hi",
+];
+const miniMaxLanguages = {
+	// Asian Languages
+	zh: "Chinese (Mandarin / Cantonese)",
+	ja: "Japanese",
+	ko: "Korean",
+	vi: "Vietnamese",
+	id: "Indonesian",
+	th: "Thai",
+	ms: "Malay",
+	tl: "Filipino",
+	ta: "Tamil",
+	hi: "Hindi",
+
+	// English
+	en: "English",
+
+	// European Languages
+	es: "Spanish",
+	fr: "French",
+	de: "German",
+	pt: "Portuguese (Brazilian)",
+	ru: "Russian",
+	it: "Italian",
+	tr: "Turkish",
+	nl: "Dutch",
+	uk: "Ukrainian",
+	pl: "Polish",
+	ro: "Romanian",
+	el: "Greek",
+	cs: "Czech",
+	fi: "Finnish",
+	bg: "Bulgarian",
+	da: "Danish",
+	sk: "Slovak",
+	sv: "Swedish",
+	hr: "Croatian",
+	hu: "Hungarian",
+	no: "Norwegian",
+	sl: "Slovenian",
+	ca: "Catalan",
+	lt: "Lithuanian",
+	nn: "Nynorsk",
+
+	// Middle Eastern & Other
+	ar: "Arabic",
+	he: "Hebrew",
+	fa: "Persian",
+	af: "Afrikaans",
+};
 
 export class ReplicateUtil {
 	constructor(
@@ -145,5 +210,71 @@ export class ReplicateUtil {
 		);
 
 		return result;
+	}
+
+	async generateVoice({
+		text,
+		ref_audioUrl,
+		textInOrginalLanguage,
+		language,
+	}: {
+		text: string; // The text to be converted to speech
+		ref_audioUrl: string;
+		textInOrginalLanguage?: string; // For better voice cloning results, provide the text in the original language of the reference audio. pre-translation if necessary.
+		language: string;
+	}): Promise<Buffer> {
+		if (qwenTtsSupportedLanguages.includes(language)) {
+			const input = {
+				mode: "voice_cloning",
+				text,
+				language: "auto", // Let the model auto-detect the language for better results
+				reference_audio: ref_audioUrl.startsWith("http")
+					? ref_audioUrl
+					: `data:audio/wav;base64,${(await readFile(ref_audioUrl)).toString("base64")}`,
+				// For better voice cloning results, you can specify the language if known
+				reference_text: textInOrginalLanguage,
+			};
+
+			const output = (await this.replicate.run("qwen/qwen3-tts", {
+				input,
+			})) as any;
+			logger.debug("Qwen TTS output: ", output);
+
+			// To access the file URL:
+			// console.log(output.url()); //=> "http://example.com"
+
+			// To write the file to disk:
+			return output.toBuffer();
+		} else {
+			const { pitch, speed, volume } = detectVoiceMetadataForMinimax(
+				await readFile(ref_audioUrl),
+			);
+			const input = {
+				text: text,
+				pitch: pitch,
+				speed: speed,
+				volume: volume,
+				bitrate: 128000,
+				channel: "dual",
+				voice_id: "Deep_Voice_Man",
+				sample_rate: 32000,
+				audio_format: "mp3",
+				// language_boost: language,
+				subtitle_enable: true,
+				english_normalization: true,
+			};
+
+			const output = (await this.replicate.run("minimax/speech-02-turbo", {
+				input,
+			})) as any;
+
+			logger.debug("Minimax TTS output: ", output);
+			// To access the file URL:
+			// console.log(output.url()); //=> "http://example.com"
+
+			// To write the file to disk:
+			// fs.writeFile("my-image.png", output);
+			return output.toBuffer();
+		}
 	}
 }

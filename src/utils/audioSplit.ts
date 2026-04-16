@@ -336,9 +336,13 @@ export async function splitAudioByTimeWithRef(
 }
 
 export interface TranscriptionWithRef extends TranscriptionOutput {
-	// this is th original audio path
+	/**
+	 * this is the original audio path
+	 */
 	ref_audio: string;
-	// this is the segment of audio
+	/**
+	 * this is the path of the splitted audio segment that corresponds to this transcription
+	 */
 	audio_file: string;
 }
 
