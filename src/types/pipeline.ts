@@ -23,6 +23,7 @@ export interface StepContext {
 export interface Step<Input, Output> {
 	name: string;
 	description: string;
+	version?: number;
 	handler: (args: StepArgs<Input>) => PromisAble<Output>;
 }
 

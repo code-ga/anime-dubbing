@@ -115,17 +115,17 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 
 ### src/types/checkpoint.ts
 - Type definitions for checkpoint functionality
-- CheckpointData interface: pipelineName, currentStepIndex, stepStatuses, stepNames, previousOutputs, input, timestamp, version
+- CheckpointData interface: pipelineName, currentStepIndex, stepStatuses, stepNames, stepVersions, previousOutputs, input, timestamp, version
 - CHECKPOINT_VERSION = 1
 - CHECKPOINT_FILENAME = ".pipeline-checkpoint.json"
 
 ### src/utils/checkpoint.ts
 - Checkpoint utilities: saveCheckpoint, loadCheckpoint, clearCheckpoint
 - saveCheckpoint(tmpDir, data): saves checkpoint JSON to tmp directory
-- loadCheckpoint(tmpDir, pipelineName, stepNames): loads checkpoint if exists, validates pipeline name and step count
-  - Validates step names for completed steps (index < currentStepIndex)
-  - If step name mismatch found at index i, adjusts checkpoint to resume from step i (preserves outputs from steps 0 to i-1)
-  - Returns adjusted checkpoint instead of clearing when step names changed
+- loadCheckpoint(tmpDir, pipelineName, stepNames, stepVersions?): loads checkpoint if exists, validates pipeline name and step count
+  - Validates step versions for completed steps (index < currentStepIndex) - if version mismatch, adjusts to resume from that step
+  - Also validates step names for completed steps (for backward compatibility)
+  - Returns adjusted checkpoint instead of clearing when step changed
 - clearCheckpoint(tmpDir): removes checkpoint file after successful completion
 
 ### src/commands/dubbing.tsx
@@ -308,3 +308,4 @@ User runs: bun run src/index.tsx dubbing --inputFile video.mp4 --tmpDirectory ./
 - LogViewer now visible in all states (completed/cancelled/error) for log review (2026-04-15)
 - Added pipeline checkpoint/resume feature - pipeline can resume from last completed step (2026-04-16)
 - Added step name validation in checkpoint - changing step name adjusts checkpoint to re-run from that step while preserving earlier outputs (2026-04-16)
+- Added step versioning for checkpoint - developers can add `version` property to step to mark changes; version mismatch triggers resume from that step (2026-04-17)

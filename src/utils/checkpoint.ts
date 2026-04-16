@@ -23,6 +23,7 @@ export async function loadCheckpoint(
 	tmpDir: string,
 	pipelineName: string,
 	stepNames: string[],
+	stepVersions?: number[],
 ): Promise<CheckpointData | null> {
 	const filePath = path.join(tmpDir, CHECKPOINT_FILENAME);
 	try {
@@ -52,6 +53,26 @@ export async function loadCheckpoint(
 			);
 			await clearCheckpoint(tmpDir);
 			return null;
+		}
+		const currentVersions = stepVersions ?? stepNames.map(() => 0);
+		for (let i = 0; i < data.currentStepIndex; i++) {
+			const checkpointStepVersion = data.stepVersions?.[i] ?? 0;
+			const currentStepVersion = currentVersions[i] ?? 0;
+			if (checkpointStepVersion !== currentStepVersion) {
+				logger.debug(
+					`Step version mismatch at index ${i}: checkpoint has version ${checkpointStepVersion}, current has version ${currentStepVersion} - resuming from step ${i}`,
+				);
+				const adjustedData: CheckpointData = {
+					...data,
+					currentStepIndex: i,
+					stepStatuses: data.stepStatuses
+						.slice(0, i)
+						.concat(
+							Array(stepNames.length - i).fill("pending") as StepStatus[],
+						),
+				};
+				return adjustedData;
+			}
 		}
 		for (let i = 0; i < data.currentStepIndex; i++) {
 			const checkpointStepName = data.stepNames?.[i];

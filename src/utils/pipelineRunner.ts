@@ -87,6 +87,7 @@ export async function runPipeline<Input extends z.ZodObject>(
 					currentStepIndex: stepIndex,
 					stepStatuses,
 					stepNames: pipeline.steps.map((s) => s.name),
+					stepVersions: pipeline.steps.map((s) => s.version ?? 0),
 					previousOutputs,
 					input: pipelineArgs.input,
 				});

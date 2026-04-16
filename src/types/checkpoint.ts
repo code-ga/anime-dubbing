@@ -5,6 +5,7 @@ export interface CheckpointData {
 	currentStepIndex: number;
 	stepStatuses: StepStatus[];
 	stepNames: string[];
+	stepVersions: number[];
 	previousOutputs: Record<number, unknown>;
 	input: unknown;
 	timestamp: string;
