@@ -59,7 +59,7 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 
 ### src/pages/PipelineApp.tsx
 - Generic UI page component for running any pipeline
-- Props: pipeline (Pipeline), input (parsed input), outputFile (string), args (optional Record<string, unknown>), onCancel (optional callback)
+- Props: pipeline (Pipeline), input (parsed input), outputFile (string), args (optional Record<string, unknown>), onCancel (optional callback), checkpoint (optional CheckpointData), tmpDirectory (optional string)
 - Handles pipeline execution with useEffect and AbortController for cancellation
 - Passes args to runPipeline including outputFile merged with custom args
 - Displays PipelineProgress + LogViewer in ALL states: running, completed, cancelled, error
@@ -67,14 +67,20 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 - Reusable across different pipeline types
 - Integrates log viewer displaying logs from logger utility
 - Registers log callback on mount to receive log entries
+- If checkpoint provided, initializes step statuses from checkpoint and passes to runPipeline for resume
+- Saves checkpoint after each step completes if tmpDirectory is provided
 
 ### src/utils/pipelineRunner.ts
 - Utility for executing pipelines with progress callbacks
 - Takes PipelineArgs: { input, args } where args includes outputFile and custom args
 - Supports AbortSignal for cancellation
+- Supports RunPipelineOptions: { tmpDirectory, checkpoint, onCheckpointSave } for checkpoint functionality
 - Iterates through pipeline steps and passes to each handler: { input: parsedInput, context: { signal, previousOutputs, args } }
 - previousOutputs is updated after each step completes so subsequent steps can access prior outputs
 - Returns PipelineResult with output and cancelled flag
+- When checkpoint provided: starts from checkpoint.currentStepIndex + 1, uses stored previousOutputs
+- When tmpDirectory provided: saves checkpoint after each step completes via onCheckpointSave callback
+- Clears checkpoint on successful completion
 
 ### src/utils/cliRenderer.ts
 - Utility for rendering React elements to CLI
@@ -91,17 +97,65 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 - Input: inputFile, outputFile
 - Output: outputFile
 
+### src/pipelines/dubbing.ts
+- Pipeline for complete dubbing workflow (extract audio → transcribe → translate)
+- Uses ReplicateUtil for AI processing (Whisper transcription, translation)
+- Input: inputFile, outputFile, targetLanguage, tmpDirectory, sourceLanguage
+- Steps:
+  1. "Setup Environment" - Initialize pipeline environment
+  2. "Convert to WAV" - Convert video audio to WAV format
+  3. "Detect and Split by Silence" - Split audio at silence points
+  4. "Seperate Speech from Audio" - Isolate speech from background (placeholder)
+  5. "Transcribe Audio" - Convert speech to text using Whisper
+  6. "Translate Transcript" - Translate text to target language using LLM
+- Output: transcriptions array with text, timing, and reference audio paths
+
 ### src/pipelines/index.ts
 - Exports all pipeline definitions
+
+### src/types/checkpoint.ts
+- Type definitions for checkpoint functionality
+- CheckpointData interface: pipelineName, currentStepIndex, stepStatuses, stepNames, previousOutputs, input, timestamp, version
+- CHECKPOINT_VERSION = 1
+- CHECKPOINT_FILENAME = ".pipeline-checkpoint.json"
+
+### src/utils/checkpoint.ts
+- Checkpoint utilities: saveCheckpoint, loadCheckpoint, clearCheckpoint
+- saveCheckpoint(tmpDir, data): saves checkpoint JSON to tmp directory
+- loadCheckpoint(tmpDir, pipelineName, stepNames): loads checkpoint if exists, validates pipeline name and step count
+  - Validates step names for completed steps (index < currentStepIndex)
+  - If step name mismatch found at index i, adjusts checkpoint to resume from step i (preserves outputs from steps 0 to i-1)
+  - Returns adjusted checkpoint instead of clearing when step names changed
+- clearCheckpoint(tmpDir): removes checkpoint file after successful completion
 
 ### src/commands/dubbing.tsx
 - Dubbing command entry point
 - Defines CLI options (inputFile, tmpDirectory, outputFile)
 - Imports pipeline and renders PipelineApp with renderToCli
+- Checks for existing checkpoint on startup using loadCheckpoint
+- Passes checkpoint and tmpDirectory to PipelineApp for resume functionality
+
+### src/utils/audioSplit.ts
+- Utility for splitting audio files by silence detection
+- Uses FFmpeg's silencedetect filter to find silent portions
+- Exports: `detectSilence(audioPath, silenceThreshold?, minSilenceDuration?)` - returns array of SilenceSegment objects with start, end, duration
+- Exports: `splitAudioBySilence(options)` - splits audio into multiple files at silence points
+  - Options: inputPath, outputDir, silenceThreshold (default -40dB), minSilenceDuration (default 0.5s), minSegmentDuration (default 0.3s)
+  - Returns array of output file paths
+- SilenceSegment interface: { start: number, end: number, duration: number }
 
 ### convert/ffmpeg.ts
 - Handler for converting video files to WAV audio
 - Uses fluent-ffmpeg library for audio conversion
+
+### src/class/replicate.ts
+- ReplicateUtil class for AI-powered audio processing
+- Uses Replicate API for Whisper transcription and speech isolation
+- Uses Hack Club AI (OpenRouter) for translation
+- Methods:
+  - `isolationSpeechFromAudio(audioUrl)` - Separate speech from background audio using SAM-audio-large model
+  - `transcribeAudio(audioUrl, sourceLanguage)` - Transcribe audio using Incredibly Fast Whisper model, returns TranscriptionOutput[]
+  - `translateTranscript(transcriptions, targetLanguage, sourceLanguage)` - Translate transcriptions using LLM, returns updated TranscriptionOutput[]
 
 ## Feature: Pipeline System with Steps, Cancellation, and Data Passing
 
@@ -194,6 +248,47 @@ bun run src/index.tsx dubbing --inputFile video.mp4 --outputFile audio.wav
 - Scroll indicator shows position: ↓ (at bottom), ↕ (middle), ↑ (at top)
 - LogViewer visible in all states (running/completed/cancelled/error) for review
 
+## Feature: Pipeline Checkpoint/Resume
+
+### Overview
+Add automatic checkpoint saving to enable resuming pipeline execution from the last completed step. Checkpoints are saved in the user-provided tmp directory.
+
+### How it works
+```
+User runs: bun run src/index.tsx dubbing --inputFile video.mp4 --tmpDirectory ./tmp
+
+1. dubbing.tsx checks ./tmp for .pipeline-checkpoint.json
+   - If found: load checkpoint, pass to PipelineApp
+   - If not found: start fresh
+
+2. runPipeline receives checkpoint data
+   - If resuming: start from checkpoint.currentStepIndex + 1
+   - Use checkpoint.previousOutputs for steps that were completed
+
+3. After each step completes:
+   - runPipeline saves checkpoint with updated state
+
+4. On successful completion:
+   - Clear checkpoint file
+```
+
+### Checkpoint Data
+- pipelineName: string (to verify pipeline matches)
+- currentStepIndex: number (index of last completed step)
+- stepStatuses: StepStatus[] (status of each step)
+- stepNames: string[] (step names for validation)
+- previousOutputs: Record<number, unknown> (serializable outputs from completed steps)
+- input: unknown (original pipeline input)
+- timestamp: string (ISO date)
+- version: number (for future compatibility)
+
+### Edge Cases
+- **Corrupted checkpoint**: If JSON parse fails, treat as no checkpoint, start fresh
+- **Different pipeline**: If checkpoint pipeline name differs, ignore and start fresh
+- **Step count mismatch**: If step count differs, clear checkpoint and restart
+- **Step name mismatch**: If a completed step's name changed, adjust checkpoint to resume from that step (preserving outputs from earlier steps)
+- Only serializable data is stored (strings, numbers, arrays). Skip non-serializable like file buffers.
+
 ## Future Improvements
 - Add more pipeline types (video processing, subtitle extraction)
 - Add unit tests with OpenTUI's test renderer
@@ -211,3 +306,5 @@ bun run src/index.tsx dubbing --inputFile video.mp4 --outputFile audio.wav
 - Fixed keyboard scrolling in LogViewer (up/k to scroll up, down/j to scroll down) (2026-04-15)
 - Fixed Ctrl+C cancellation not stopping pipeline - now properly aborts (2026-04-15)
 - LogViewer now visible in all states (completed/cancelled/error) for log review (2026-04-15)
+- Added pipeline checkpoint/resume feature - pipeline can resume from last completed step (2026-04-16)
+- Added step name validation in checkpoint - changing step name adjusts checkpoint to re-run from that step while preserving earlier outputs (2026-04-16)

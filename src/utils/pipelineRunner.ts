@@ -1,21 +1,37 @@
+import { inspect } from "util";
 import type { Pipeline, StepStatus } from "../types/pipeline";
+import type { CheckpointData } from "../types/checkpoint";
+import { logger } from "../utils/logger";
+import { saveCheckpoint, clearCheckpoint } from "./checkpoint";
+import type z from "zod";
 
 export interface PipelineResult {
 	output: unknown;
 	cancelled: boolean;
 }
 
-export interface PipelineArgs {
-	input: unknown;
+export interface PipelineArgs<Input extends z.ZodObject> {
+	input: z.infer<Input>;
 	args: Record<string, unknown>;
 }
 
-export async function runPipeline(
-	pipeline: Pipeline<any, any>,
-	pipelineArgs: PipelineArgs,
+export interface RunPipelineOptions {
+	tmpDirectory?: string;
+	checkpoint?: CheckpointData | null;
+	onCheckpointSave?: (data: Omit<CheckpointData, "version" | "timestamp">) => Promise<void>;
+}
+
+export async function runPipeline<Input extends z.ZodObject>(
+	pipeline: Pipeline<Input, any>,
+	pipelineArgs: PipelineArgs<Input>,
 	onStepChange: (step: number, status: StepStatus) => void,
 	signal?: AbortSignal,
+	options?: RunPipelineOptions,
 ): Promise<PipelineResult> {
+	const { tmpDirectory, checkpoint, onCheckpointSave } = options ?? {};
+	const startStepIndex = checkpoint ? checkpoint.currentStepIndex + 1 : 0;
+	const previousOutputs: Record<number, unknown> = checkpoint?.previousOutputs ?? {};
+	const stepStatuses: StepStatus[] = checkpoint?.stepStatuses ?? pipeline.steps.map(() => "pending");
 	const localAbortController = new AbortController();
 	const activeSignal = signal ?? localAbortController.signal;
 
@@ -30,16 +46,27 @@ export async function runPipeline(
 	};
 
 	const totalSteps = pipeline.steps.length;
-	const previousOutputs: Record<number, unknown> = {};
 	let lastOutput: unknown = null;
 
-	for (let stepIndex = 0; stepIndex < totalSteps; stepIndex++) {
+	if (checkpoint) {
+		for (let i = 0; i < startStepIndex; i++) {
+			onStepChange(i, stepStatuses[i] ?? "completed");
+		}
+	}
+
+	for (let stepIndex = startStepIndex; stepIndex < totalSteps; stepIndex++) {
 		checkCancelled();
 		onStepChange(stepIndex, "running");
 
 		try {
+			logger.debug(`Step ${stepIndex}: Parsing input...`);
+			logger.debug(`PipelineArgs.input: ${JSON.stringify(pipelineArgs.input)}`);
 			const parsedInput = pipeline.inputType.parse(pipelineArgs.input);
+			logger.debug(
+				`Parsed input for step ${stepIndex}: ${JSON.stringify(parsedInput)}`,
+			);
 			const step = pipeline.steps[stepIndex]!;
+			logger.debug(`Running step ${stepIndex}: ${step.name}`);
 			lastOutput = await step.handler({
 				input: parsedInput,
 				context: {
@@ -49,16 +76,35 @@ export async function runPipeline(
 				},
 			});
 			previousOutputs[stepIndex] = lastOutput;
+			stepStatuses[stepIndex] = "completed";
+			if (tmpDirectory && onCheckpointSave) {
+				await onCheckpointSave({
+					pipelineName: pipeline.name,
+					currentStepIndex: stepIndex,
+					stepStatuses,
+					stepNames: pipeline.steps.map((s) => s.name),
+					previousOutputs,
+					input: pipelineArgs.input,
+				});
+			}
 		} catch (error) {
 			if (activeSignal.aborted) {
 				onStepChange(stepIndex, "cancelled");
 				return { output: lastOutput, cancelled: true };
 			}
 			onStepChange(stepIndex, "error");
+			logger.error(
+				`Error in step ${stepIndex} (${pipeline.steps[stepIndex]?.name}):`,
+				inspect(error),
+			);
 			throw error;
 		}
 		checkCancelled();
 		onStepChange(stepIndex, "completed");
+	}
+
+	if (tmpDirectory) {
+		await clearCheckpoint(tmpDirectory);
 	}
 
 	return { output: lastOutput, cancelled: false };

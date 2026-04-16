@@ -3,25 +3,38 @@ import type { KeyEvent } from "@opentui/core";
 import { useEffect, useRef, useState } from "react";
 import z from "zod";
 import type { Pipeline, StepStatus } from "../types/pipeline";
+import type { CheckpointData } from "../types/checkpoint";
 import { usePipelineLogger } from "../hooks/usePipelineLogger";
 import { LogViewer } from "../components/LogViewer";
 import { PipelineProgress } from "../components/PipelineProgress";
-import { runPipeline, type PipelineArgs } from "../utils/pipelineRunner";
+import { runPipeline, type PipelineArgs, type RunPipelineOptions } from "../utils/pipelineRunner";
 import { logger, setLogCallback } from "../utils/logger";
+import { saveCheckpoint } from "../utils/checkpoint";
 import { ReplicateUtil } from "../class/replicate";
 
-export interface PipelineAppProps {
-	pipeline: Pipeline<any, any>;
+export interface PipelineAppProps<PipeLineInput extends z.ZodObject> {
+	pipeline: Pipeline<PipeLineInput, any>;
 	input: z.infer<Pipeline<any, any>["inputType"]>;
 	outputFile: string;
-	args?: Record<string, unknown>;
+	args?: z.infer<PipeLineInput>;
 	onCancel?: () => void;
+	checkpoint?: CheckpointData | null;
+	tmpDirectory?: string;
 }
 
-export function PipelineApp({ pipeline, input, outputFile, args = {}, onCancel }: PipelineAppProps) {
+export function PipelineApp<PipeLineInput extends z.ZodObject>({
+	pipeline,
+	input,
+	outputFile,
+	args,
+	onCancel,
+	checkpoint,
+	tmpDirectory,
+}: PipelineAppProps<PipeLineInput>) {
 	const abortControllerRef = useRef<AbortController | null>(null);
-	const stepStatus: StepStatus[] = pipeline.steps.map(() => "pending");
-	const [localStepStatus, setLocalStepStatus] = useState<StepStatus[]>(stepStatus);
+	const initialStepStatus: StepStatus[] = checkpoint?.stepStatuses ?? pipeline.steps.map(() => "pending");
+	const [localStepStatus, setLocalStepStatus] =
+		useState<StepStatus[]>(initialStepStatus);
 	const [localCurrentStep, setLocalCurrentStep] = useState(0);
 	const [isComplete, setIsComplete] = useState(false);
 	const [isCancelled, setIsCancelled] = useState(false);
@@ -53,16 +66,30 @@ export function PipelineApp({ pipeline, input, outputFile, args = {}, onCancel }
 	useEffect(() => {
 		abortControllerRef.current = new AbortController();
 
-		const pipelineArgs: PipelineArgs = {
+		const pipelineArgs: PipelineArgs<PipeLineInput> = {
 			input,
 			args: {
 				outputFile,
+				...input,
 				...args,
 				replicateUtil: new ReplicateUtil(), // Pass ReplicateUtil instance to pipeline steps
 			},
 		};
+		logger.debug("PipelineApp: Starting pipeline with args:", pipelineArgs);
 
 		async function execute() {
+			const runOptions: RunPipelineOptions | undefined = tmpDirectory
+				? {
+						tmpDirectory,
+						checkpoint: checkpoint ?? undefined,
+						onCheckpointSave: async (data) => {
+							if (tmpDirectory) {
+								await saveCheckpoint(tmpDirectory, data);
+							}
+						},
+				  }
+				: undefined;
+
 			try {
 				const result = await runPipeline(
 					pipeline,
@@ -76,6 +103,7 @@ export function PipelineApp({ pipeline, input, outputFile, args = {}, onCancel }
 						setLocalCurrentStep(step);
 					},
 					abortControllerRef.current?.signal,
+					runOptions,
 				);
 
 				if (result.cancelled) {
@@ -145,9 +173,7 @@ export function PipelineApp({ pipeline, input, outputFile, args = {}, onCancel }
 					<text fg="#f59e0b" attributes={TextAttributes.BOLD}>
 						○ Pipeline cancelled
 					</text>
-					<text attributes={TextAttributes.DIM}>
-						Press any key to exit...
-					</text>
+					<text attributes={TextAttributes.DIM}>Press any key to exit...</text>
 				</box>
 				<box marginTop={1}>
 					<LogViewer logs={logs.current} maxHeight={8} />
