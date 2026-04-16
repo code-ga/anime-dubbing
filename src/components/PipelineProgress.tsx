@@ -42,45 +42,36 @@ export function PipelineProgress({
 		<box flexDirection="column" gap={1} padding={1}>
 			<box border borderStyle="rounded" padding={1}>
 				<box flexDirection="column" gap={1}>
-					<text attributes={TextAttributes.BOLD}>
-						{pipeline.name}
-					</text>
-					<text attributes={TextAttributes.DIM}>
-						{pipeline.description}
-					</text>
+					<text attributes={TextAttributes.BOLD}>{pipeline.name}</text>
+					<text attributes={TextAttributes.DIM}>{pipeline.description}</text>
 				</box>
 			</box>
 
 			<box border borderStyle="rounded" padding={1}>
 				<box flexDirection="column" gap={1}>
 					{stepStatus.map((status, index) => {
-							const step = pipeline.steps[index];
-							return (
-								<box
-									key={index}
-									flexDirection="row"
-									alignItems="center"
-									gap={2}
+						const step = pipeline.steps[index];
+						return (
+							<box key={index} flexDirection="row" alignItems="center" gap={2}>
+								<text fg={getStatusColor(status)}>
+									{getStatusIcon(status, index)}
+								</text>
+								<text
+									fg={
+										status === "running"
+											? "#eab308"
+											: status === "completed"
+												? "#22c55e"
+												: status === "error"
+													? "#ef4444"
+													: undefined
+									}
 								>
-									<text fg={getStatusColor(status)}>
-										{getStatusIcon(status, index)}
-									</text>
-									<text
-										fg={
-											status === "running"
-												? "#eab308"
-												: status === "completed"
-													? "#22c55e"
-													: status === "error"
-														? "#ef4444"
-														: undefined
-										}
-									>
-										Step {index + 1}: {step?.name}
-									</text>
-								</box>
-							);
-						})}
+									Step {index + 1}: {step?.name}
+								</text>
+							</box>
+						);
+					})}
 				</box>
 			</box>
 

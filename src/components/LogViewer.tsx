@@ -1,6 +1,6 @@
 import type { KeyEvent } from "@opentui/core";
-import { useState } from "react";
 import { TextAttributes } from "@opentui/core";
+import { useState } from "react";
 import type { LogEntry } from "../hooks/usePipelineLogger";
 
 interface LogViewerProps {
@@ -31,7 +31,10 @@ function getLogAttributes(level: string) {
 
 export function LogViewer({ logs, maxHeight = 12 }: LogViewerProps) {
 	const [scrollOffset, setScrollOffset] = useState(0);
-	const displayLogs = logs.slice(-maxHeight * 2 + scrollOffset, logs.length - scrollOffset);
+	const displayLogs = logs.slice(
+		-maxHeight * 2 + scrollOffset,
+		logs.length - scrollOffset,
+	);
 	const maxOffset = Math.max(0, logs.length - maxHeight);
 
 	const handleKeyDown = (key: KeyEvent) => {
@@ -43,9 +46,14 @@ export function LogViewer({ logs, maxHeight = 12 }: LogViewerProps) {
 		}
 	};
 
-	const scrollIndicator = maxOffset > 0
-		? scrollOffset === 0 ? "↓" : scrollOffset === maxOffset ? "↑" : "↕"
-		: "";
+	const scrollIndicator =
+		maxOffset > 0
+			? scrollOffset === 0
+				? "↓"
+				: scrollOffset === maxOffset
+					? "↑"
+					: "↕"
+			: "";
 
 	return (
 		<box

@@ -1,8 +1,8 @@
-import { readFile } from "fs/promises";
-import Replicate from "replicate";
-import { logger } from "../utils/logger";
+import { readFile } from "node:fs/promises";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText } from "ai";
+import Replicate from "replicate";
+import { logger } from "../utils/logger";
 
 export interface TranscriptionOutput {
 	end: number;
@@ -137,11 +137,12 @@ export class ReplicateUtil {
 			.split("\n")
 			.filter((chunk) => chunk.trim() !== "");
 
-		const result: (T & { translated: string })[] =
-			transcriptions.map((transcription, index) => ({
+		const result: (T & { translated: string })[] = transcriptions.map(
+			(transcription, index) => ({
 				...transcription,
 				translated: translatedChunks[index] || transcription.text,
-			}));
+			}),
+		);
 
 		return result;
 	}

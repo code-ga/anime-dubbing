@@ -1,9 +1,9 @@
-import { inspect } from "util";
-import type { Pipeline, StepStatus } from "../types/pipeline";
-import type { CheckpointData } from "../types/checkpoint";
-import { logger } from "../utils/logger";
-import { saveCheckpoint, clearCheckpoint } from "./checkpoint";
+import { inspect } from "node:util";
 import type z from "zod";
+import type { CheckpointData } from "../types/checkpoint";
+import type { Pipeline, StepStatus } from "../types/pipeline";
+import { logger } from "../utils/logger";
+import { clearCheckpoint } from "./checkpoint";
 
 export interface PipelineResult {
 	output: unknown;
@@ -18,7 +18,9 @@ export interface PipelineArgs<Input extends z.ZodObject> {
 export interface RunPipelineOptions {
 	tmpDirectory?: string;
 	checkpoint?: CheckpointData | null;
-	onCheckpointSave?: (data: Omit<CheckpointData, "version" | "timestamp">) => Promise<void>;
+	onCheckpointSave?: (
+		data: Omit<CheckpointData, "version" | "timestamp">,
+	) => Promise<void>;
 }
 
 export async function runPipeline<Input extends z.ZodObject>(
@@ -30,8 +32,10 @@ export async function runPipeline<Input extends z.ZodObject>(
 ): Promise<PipelineResult> {
 	const { tmpDirectory, checkpoint, onCheckpointSave } = options ?? {};
 	const startStepIndex = checkpoint ? checkpoint.currentStepIndex + 1 : 0;
-	const previousOutputs: Record<number, unknown> = checkpoint?.previousOutputs ?? {};
-	const stepStatuses: StepStatus[] = checkpoint?.stepStatuses ?? pipeline.steps.map(() => "pending");
+	const previousOutputs: Record<number, unknown> =
+		checkpoint?.previousOutputs ?? {};
+	const stepStatuses: StepStatus[] =
+		checkpoint?.stepStatuses ?? pipeline.steps.map(() => "pending");
 	const localAbortController = new AbortController();
 	const activeSignal = signal ?? localAbortController.signal;
 

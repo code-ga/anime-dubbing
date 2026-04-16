@@ -1,16 +1,20 @@
-import { TextAttributes } from "@opentui/core";
 import type { KeyEvent } from "@opentui/core";
+import { TextAttributes } from "@opentui/core";
 import { useEffect, useRef, useState } from "react";
-import z from "zod";
-import type { Pipeline, StepStatus } from "../types/pipeline";
-import type { CheckpointData } from "../types/checkpoint";
-import { usePipelineLogger } from "../hooks/usePipelineLogger";
+import type z from "zod";
+import { ReplicateUtil } from "../class/replicate";
 import { LogViewer } from "../components/LogViewer";
 import { PipelineProgress } from "../components/PipelineProgress";
-import { runPipeline, type PipelineArgs, type RunPipelineOptions } from "../utils/pipelineRunner";
-import { logger, setLogCallback } from "../utils/logger";
+import { usePipelineLogger } from "../hooks/usePipelineLogger";
+import type { CheckpointData } from "../types/checkpoint";
+import type { Pipeline, StepStatus } from "../types/pipeline";
 import { saveCheckpoint } from "../utils/checkpoint";
-import { ReplicateUtil } from "../class/replicate";
+import { logger, setLogCallback } from "../utils/logger";
+import {
+	type PipelineArgs,
+	type RunPipelineOptions,
+	runPipeline,
+} from "../utils/pipelineRunner";
 
 export interface PipelineAppProps<PipeLineInput extends z.ZodObject> {
 	pipeline: Pipeline<PipeLineInput, any>;
@@ -32,7 +36,8 @@ export function PipelineApp<PipeLineInput extends z.ZodObject>({
 	tmpDirectory,
 }: PipelineAppProps<PipeLineInput>) {
 	const abortControllerRef = useRef<AbortController | null>(null);
-	const initialStepStatus: StepStatus[] = checkpoint?.stepStatuses ?? pipeline.steps.map(() => "pending");
+	const initialStepStatus: StepStatus[] =
+		checkpoint?.stepStatuses ?? pipeline.steps.map(() => "pending");
 	const [localStepStatus, setLocalStepStatus] =
 		useState<StepStatus[]>(initialStepStatus);
 	const [localCurrentStep, setLocalCurrentStep] = useState(0);
@@ -87,7 +92,7 @@ export function PipelineApp<PipeLineInput extends z.ZodObject>({
 								await saveCheckpoint(tmpDirectory, data);
 							}
 						},
-				  }
+					}
 				: undefined;
 
 			try {

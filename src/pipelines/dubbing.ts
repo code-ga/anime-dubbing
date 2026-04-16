@@ -1,6 +1,6 @@
-import { mkdir } from "fs/promises";
-import path from "path";
-import { inspect } from "util";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+import { inspect } from "node:util";
 import z from "zod";
 import type { ReplicateUtil } from "../class/replicate";
 import { convertToWav } from "../convert/ffmpeg";

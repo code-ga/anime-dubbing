@@ -1,2 +1,2 @@
-export * from "./dubbing"
-export * from "./help"
+export * from "./dubbing";
+export * from "./help";

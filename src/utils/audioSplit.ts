@@ -1,8 +1,8 @@
 import ffmpeg from "fluent-ffmpeg";
-import { logger } from "../utils/logger";
-import * as path from "path";
 import * as fs from "fs/promises";
+import * as path from "path";
 import type { TranscriptionOutput } from "../class/replicate";
+import { logger } from "../utils/logger";
 
 export interface SilenceSegment {
 	start: number;

@@ -1,11 +1,8 @@
-import { readFile, writeFile, unlink, access } from "fs/promises";
-import path from "path";
+import { access, readFile, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { CheckpointData } from "../types/checkpoint";
+import { CHECKPOINT_FILENAME, CHECKPOINT_VERSION } from "../types/checkpoint";
 import type { StepStatus } from "../types/pipeline";
-import {
-	CHECKPOINT_FILENAME,
-	CHECKPOINT_VERSION,
-} from "../types/checkpoint";
 import { logger } from "./logger";
 
 export async function saveCheckpoint(
@@ -37,35 +34,51 @@ export async function loadCheckpoint(
 		const content = await readFile(filePath, "utf-8");
 		const data = JSON.parse(content) as CheckpointData;
 		if (data.version !== CHECKPOINT_VERSION) {
-			logger.debug(`Checkpoint version mismatch: expected ${CHECKPOINT_VERSION}, got ${data.version}`);
+			logger.debug(
+				`Checkpoint version mismatch: expected ${CHECKPOINT_VERSION}, got ${data.version}`,
+			);
 			await clearCheckpoint(tmpDir);
 			return null;
 		}
 		if (data.pipelineName !== pipelineName) {
-			logger.debug(`Pipeline name mismatch: expected ${pipelineName}, got ${data.pipelineName}`);
+			logger.debug(
+				`Pipeline name mismatch: expected ${pipelineName}, got ${data.pipelineName}`,
+			);
 			return null;
 		}
 		if (data.stepStatuses.length !== stepNames.length) {
-			logger.debug(`Step count mismatch: checkpoint has ${data.stepStatuses.length} steps, pipeline has ${stepNames.length} steps`);
+			logger.debug(
+				`Step count mismatch: checkpoint has ${data.stepStatuses.length} steps, pipeline has ${stepNames.length} steps`,
+			);
 			await clearCheckpoint(tmpDir);
 			return null;
 		}
 		for (let i = 0; i < data.currentStepIndex; i++) {
 			const checkpointStepName = data.stepNames?.[i];
 			const currentStepName = stepNames[i];
-			if (checkpointStepName && currentStepName && checkpointStepName !== currentStepName) {
-				logger.debug(`Step name mismatch at index ${i}: checkpoint has "${checkpointStepName}", pipeline has "${currentStepName}" - resuming from step ${i}`);
+			if (
+				checkpointStepName &&
+				currentStepName &&
+				checkpointStepName !== currentStepName
+			) {
+				logger.debug(
+					`Step name mismatch at index ${i}: checkpoint has "${checkpointStepName}", pipeline has "${currentStepName}" - resuming from step ${i}`,
+				);
 				const adjustedData: CheckpointData = {
 					...data,
 					currentStepIndex: i,
-					stepStatuses: data.stepStatuses.slice(0, i).concat(
-						Array(stepNames.length - i).fill("pending") as StepStatus[]
-					),
+					stepStatuses: data.stepStatuses
+						.slice(0, i)
+						.concat(
+							Array(stepNames.length - i).fill("pending") as StepStatus[],
+						),
 				};
 				return adjustedData;
 			}
 		}
-		logger.info(`Found checkpoint, resuming from step ${data.currentStepIndex}`);
+		logger.info(
+			`Found checkpoint, resuming from step ${data.currentStepIndex}`,
+		);
 		return data;
 	} catch (error) {
 		logger.debug(`Failed to load checkpoint: ${error}`);

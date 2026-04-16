@@ -1,6 +1,11 @@
-import z from "zod";
+import type z from "zod";
 
-export type StepStatus = "pending" | "running" | "completed" | "error" | "cancelled";
+export type StepStatus =
+	| "pending"
+	| "running"
+	| "completed"
+	| "error"
+	| "cancelled";
 
 export type PromisAble<T> = T | Promise<T>;
 
@@ -21,7 +26,10 @@ export interface Step<Input, Output> {
 	handler: (args: StepArgs<Input>) => PromisAble<Output>;
 }
 
-export interface Pipeline<InputSchema extends z.ZodSchema, OutputSchema extends z.ZodSchema> {
+export interface Pipeline<
+	InputSchema extends z.ZodSchema,
+	OutputSchema extends z.ZodSchema,
+> {
 	name: string;
 	description: string;
 	allowTypes: string[];
@@ -33,6 +41,8 @@ export interface Pipeline<InputSchema extends z.ZodSchema, OutputSchema extends 
 export function definePipeline<
 	InputSchema extends z.ZodSchema,
 	OutputSchema extends z.ZodSchema,
->(config: Pipeline<InputSchema, OutputSchema>): Pipeline<InputSchema, OutputSchema> {
+>(
+	config: Pipeline<InputSchema, OutputSchema>,
+): Pipeline<InputSchema, OutputSchema> {
 	return config;
 }

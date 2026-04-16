@@ -1,12 +1,12 @@
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { defineCommand, defineOptions } from "@robingenz/zli";
 import z from "zod";
-import { dubbingPipeline } from "../pipelines";
 import { PipelineApp } from "../pages/PipelineApp";
+import { dubbingPipeline } from "../pipelines";
+import { loadCheckpoint } from "../utils/checkpoint";
 import { renderToCli } from "../utils/cliRenderer";
 import { logger } from "../utils/logger";
-import { loadCheckpoint } from "../utils/checkpoint";
-import { mkdir } from "fs/promises";
-import path from "path";
 
 export const dubbing = defineCommand({
 	description: "dubbing someone",
@@ -47,7 +47,11 @@ export const dubbing = defineCommand({
 		await mkdir(absoluteTmpDir, { recursive: true });
 		logger.info(`Temporary directory is ready: ${absoluteTmpDir}`);
 
-		const checkpoint = await loadCheckpoint(absoluteTmpDir, dubbingPipeline.name, dubbingPipeline.steps.map((s) => s.name));
+		const checkpoint = await loadCheckpoint(
+			absoluteTmpDir,
+			dubbingPipeline.name,
+			dubbingPipeline.steps.map((s) => s.name),
+		);
 
 		await renderToCli(
 			<PipelineApp
