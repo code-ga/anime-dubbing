@@ -20,7 +20,7 @@ export interface PipelineAppProps<PipeLineInput extends z.ZodObject> {
 	pipeline: Pipeline<PipeLineInput, any>;
 	input: z.infer<Pipeline<any, any>["inputType"]>;
 	outputFile: string;
-	args?: z.infer<PipeLineInput>;
+	args?: Record<string, unknown>;
 	onCancel?: () => void;
 	checkpoint?: CheckpointData | null;
 	tmpDirectory?: string;
@@ -77,7 +77,9 @@ export function PipelineApp<PipeLineInput extends z.ZodObject>({
 				outputFile,
 				...input,
 				...args,
-				replicateUtil: new ReplicateUtil(), // Pass ReplicateUtil instance to pipeline steps
+				replicateUtil:
+					(args as { replicateUtil?: ReplicateUtil })?.replicateUtil ??
+					new ReplicateUtil(),
 			},
 		};
 		logger.debug("PipelineApp: Starting pipeline with args:", pipelineArgs);

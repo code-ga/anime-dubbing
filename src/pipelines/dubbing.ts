@@ -1,9 +1,13 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { inspect } from "node:util";
 import z from "zod";
 import type { ReplicateUtil } from "../class/replicate";
-import { convertToWav } from "../convert/ffmpeg";
+import {
+	convertToWav,
+	mergeAudioSegmentsWithTiming,
+	mergeAudioWithVideo,
+} from "../convert/ffmpeg";
 import { definePipeline } from "../types/pipeline";
 import {
 	mergeTranscriptionWithRef,
@@ -24,9 +28,10 @@ const dubbingPipeline = definePipeline({
 		targetLanguage: z.string(),
 		tmpDirectory: z.string(),
 		sourceLanguage: z.string(),
+		subtitleDirectory: z.string().optional(),
 	}),
 	outputType: z.object({
-		outputFile: z.string().describe("Output file for processed audio"),
+		outputFile: z.string().describe("Output file for the dubbed video"),
 	}),
 	steps: [
 		{
@@ -171,10 +176,17 @@ const dubbingPipeline = definePipeline({
 						inputPath: file,
 						refAudioPath: file,
 						outputDir: refAudioDir,
-						segments: transcription.map((item) => ({
-							start: item.start,
-							end: item.end,
-						})),
+						segments: transcription
+							.map((item) =>
+								(item.start !== undefined || item.start === null) &&
+								(item.end !== undefined || item.end === null)
+									? {
+											start: item.start,
+											end: item.end,
+										}
+									: null,
+							)
+							.filter((v): v is { start: number; end: number } => !!v),
 					});
 					allTranscriptions.push(
 						...mergeTranscriptionWithRef(transcription, segments),
@@ -222,7 +234,8 @@ const dubbingPipeline = definePipeline({
 				const result: TranscriptionWithRef[] = transcriptions.map(
 					(t, index) => ({
 						...t,
-						text: translated[index]?.text || t.text,
+						originalText: t.text,
+						text: translated[index]?.translated || t.text,
 					}),
 				);
 
@@ -232,6 +245,236 @@ const dubbingPipeline = definePipeline({
 					"",
 				);
 				return { transcriptions: result };
+			},
+		},
+		{
+			name: "Save Subtitles to SRT",
+			description: "Save original and translated subtitles to SRT files.",
+			handler: async ({ input, context }) => {
+				context.signal?.throwIfAborted();
+				const subtitleDirectory = context.args.subtitleDirectory as
+					| string
+					| undefined;
+
+				if (!subtitleDirectory) {
+					logger.debug("No subtitle directory provided, skipping SRT export");
+					return { subtitleFiles: [] };
+				}
+
+				const transcriptions = (
+					context.previousOutputs[5] as {
+						transcriptions: TranscriptionWithRef[];
+					}
+				)?.transcriptions as TranscriptionWithRef[];
+
+				if (!transcriptions || transcriptions.length === 0) {
+					logger.warn("No transcriptions to save as subtitles");
+					return { subtitleFiles: [] };
+				}
+
+				await mkdir(subtitleDirectory, { recursive: true });
+				logger.debug(`Saving SRT files to: ${subtitleDirectory}`);
+
+				const formatTime = (seconds: number): string => {
+					const hrs = Math.floor(seconds / 3600);
+					const mins = Math.floor((seconds % 3600) / 60);
+					const secs = Math.floor(seconds % 60);
+					const ms = Math.floor((seconds % 1) * 1000);
+					return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
+				};
+
+				const generateSrtContent = (
+					items: TranscriptionWithRef[],
+					getText: (t: TranscriptionWithRef) => string,
+				): string => {
+					return items
+						.map(
+							(t, index) =>
+								`${index + 1}\n${formatTime(t.start)} --> ${formatTime(t.end)}\n${getText(t)}\n`,
+						)
+						.join("\n");
+				};
+
+				const originalSrtPath = path.join(subtitleDirectory, "original.srt");
+				const translatedSrtPath = path.join(
+					subtitleDirectory,
+					"translated.srt",
+				);
+
+				await writeFile(
+					originalSrtPath,
+					generateSrtContent(transcriptions, (t) => t.originalText || t.text),
+				);
+				logger.debug(`Saved original subtitles to: ${originalSrtPath}`);
+
+				await writeFile(
+					translatedSrtPath,
+					generateSrtContent(transcriptions, (t) => t.text),
+				);
+				logger.debug(`Saved translated subtitles to: ${translatedSrtPath}`);
+
+				return {
+					subtitleFiles: [originalSrtPath, translatedSrtPath],
+				};
+			},
+		},
+		{
+			name: "Generate Dubbed Audio",
+			description:
+				"Generate dubbed audio using TTS for each translated segment.",
+			handler: async ({ input, context }) => {
+				context.signal?.throwIfAborted();
+				const replicate = context.args.replicateUtil as ReplicateUtil;
+				const transcriptions = (
+					context.previousOutputs[5] as {
+						transcriptions: TranscriptionWithRef[];
+					}
+				)?.transcriptions as TranscriptionWithRef[];
+
+				if (!transcriptions || transcriptions.length === 0) {
+					logger.warn("No transcriptions to generate dubbed audio");
+					return { audioFiles: [] };
+				}
+
+				const validRefAudios = transcriptions
+					.map((t) => t.ref_audio)
+					.filter((ref) => ref && ref.trim() !== "");
+				const firstValidRefAudio = validRefAudios.find(() => true) ?? undefined;
+				if (firstValidRefAudio) {
+					logger.debug(
+						`Using fallback reference audio: ${firstValidRefAudio} for ${transcriptions.length - validRefAudios.length} segments`,
+					);
+				}
+
+				const targetLanguage = context.args.targetLanguage as string;
+				const qwenTtsSupportedLanguages = [
+					"en",
+					"zh",
+					"ja",
+					"ko",
+					"es",
+					"fr",
+					"de",
+					"ar",
+					"pt",
+					"it",
+					"ru",
+					"hi",
+				];
+				const requiresRefAudio =
+					!qwenTtsSupportedLanguages.includes(targetLanguage);
+
+				if (requiresRefAudio && !firstValidRefAudio) {
+					throw new Error(
+						`Language "${targetLanguage}" requires reference audio for voice cloning. Please provide reference audio or use a supported language.`,
+					);
+				}
+
+				const tmpDir = context.args.tmpDirectory as string;
+				const dubbedDir = path.join(tmpDir, "dubbed_audio");
+				await mkdir(dubbedDir, { recursive: true });
+
+				const audioFiles: {
+					path: string;
+					startTime: number;
+					originalDuration?: number;
+				}[] = [];
+
+				for (let i = 0; i < transcriptions.length; i++) {
+					const t = transcriptions[i];
+					if (!t) continue;
+					const refAudioUrl =
+						t.ref_audio && t.ref_audio.trim() !== ""
+							? t.ref_audio
+							: firstValidRefAudio;
+					logger.debug(
+						`Generating dubbed audio for segment ${i + 1}/${transcriptions.length}`,
+					);
+
+					const audioBuffer = await replicate.generateVoice({
+						text: t.text,
+						ref_audioUrl: refAudioUrl ?? undefined,
+						textInOrginalLanguage: t.text,
+						language: targetLanguage,
+					});
+
+					const outputPath = path.join(
+						dubbedDir,
+						`dubbed_${String(i).padStart(4, "0")}.mp3`,
+					);
+					await writeFile(outputPath, audioBuffer);
+
+					audioFiles.push({
+						path: outputPath,
+						startTime: t.start,
+						originalDuration: t.end - t.start, // store original segment duration
+					});
+				}
+
+				logger.debug(`Generated ${audioFiles.length} dubbed audio segments`);
+				return { audioFiles };
+			},
+		},
+		{
+			name: "Merge Segments to Single Audio",
+			description:
+				"Merge all generated TTS audio segments into one audio file with timing alignment.",
+			handler: async ({ input, context }) => {
+				context.signal?.throwIfAborted();
+				const audioFiles = (
+					context.previousOutputs[6] as {
+						audioFiles: {
+							path: string;
+							startTime: number;
+							originalDuration?: number;
+						}[];
+					}
+				)?.audioFiles as {
+					path: string;
+					startTime: number;
+					originalDuration?: number;
+				}[];
+
+				if (!audioFiles || audioFiles.length === 0) {
+					logger.warn("No audio files to merge");
+					return { outputFile: "" };
+				}
+
+				const tmpDir = context.args.tmpDirectory as string;
+				const outputPath = path.join(tmpDir, "dubbed_full.mp3");
+
+				const mergedPath = await mergeAudioSegmentsWithTiming(
+					audioFiles,
+					outputPath,
+					tmpDir,
+				);
+
+				logger.debug(`Merged audio to: ${mergedPath}`);
+				return { outputFile: mergedPath };
+			},
+		},
+		{
+			name: "Merge Audio with Video",
+			description: "Combine the dubbed audio with the original video.",
+			handler: async ({ input, context }) => {
+				context.signal?.throwIfAborted();
+				const audioPath = (context.previousOutputs[7] as { outputFile: string })
+					?.outputFile as string;
+
+				if (!audioPath) {
+					throw new Error("No dubbed audio file available");
+				}
+
+				const outputPath = input.outputFile;
+
+				const mergedPath = await mergeAudioWithVideo(
+					input.inputFile,
+					audioPath,
+					outputPath,
+				);
+
+				logger.debug(`Merged video saved to: ${mergedPath}`);
+				return { outputFile: mergedPath };
 			},
 		},
 	],

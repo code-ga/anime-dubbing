@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { LogLevel } from "../hooks/usePipelineLogger";
+import { inspect } from "node:util";
 
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "app.log");
@@ -27,7 +28,7 @@ function writeLog(level: string, ...args: unknown[]) {
 	ensureLogDir();
 	const message = args
 		.map((arg) =>
-			typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg),
+			typeof arg === "object" ? inspect(arg, { depth: null }) : String(arg),
 		)
 		.join(" ");
 	const formatted = formatMessage(level, message);

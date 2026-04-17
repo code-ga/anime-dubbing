@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { defineCommand, defineOptions } from "@robingenz/zli";
 import z from "zod";
+import { ReplicateUtil } from "../class/replicate";
 import { PipelineApp } from "../pages/PipelineApp";
 import { dubbingPipeline } from "../pipelines";
 import { loadCheckpoint } from "../utils/checkpoint";
@@ -19,8 +20,8 @@ export const dubbing = defineCommand({
 				.default("./tmp"),
 			outputFile: z
 				.string()
-				.describe("Output file for the dubbed audio")
-				.default("output.wav"),
+				.describe("Output file for the dubbed video")
+				.default("output.mp4"),
 			targetLanguage: z
 				.string()
 				.describe("Target language for dubbing")
@@ -29,6 +30,10 @@ export const dubbing = defineCommand({
 				.string()
 				.describe("Source language of the audio")
 				.default("None"),
+			subtitleDirectory: z
+				.string()
+				.describe("Directory to save SRT subtitle files")
+				.optional(),
 		}),
 		{
 			i: "inputFile",
@@ -36,6 +41,7 @@ export const dubbing = defineCommand({
 			o: "outputFile",
 			l: "targetLanguage",
 			s: "sourceLanguage",
+			S: "subtitleDirectory",
 		},
 	),
 	action: async (options) => {
@@ -53,6 +59,8 @@ export const dubbing = defineCommand({
 			dubbingPipeline.steps.map((s) => s.name),
 		);
 
+		const replicateUtil = new ReplicateUtil();
+
 		await renderToCli(
 			<PipelineApp
 				pipeline={dubbingPipeline}
@@ -62,10 +70,14 @@ export const dubbing = defineCommand({
 					targetLanguage: options.targetLanguage,
 					tmpDirectory: absoluteTmpDir,
 					sourceLanguage: options.sourceLanguage,
+					subtitleDirectory: options.subtitleDirectory,
 				}}
 				outputFile={options.outputFile}
 				checkpoint={checkpoint}
 				tmpDirectory={absoluteTmpDir}
+				args={{
+					replicateUtil,
+				}}
 			/>,
 		);
 	},

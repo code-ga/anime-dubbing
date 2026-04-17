@@ -344,6 +344,10 @@ export interface TranscriptionWithRef extends TranscriptionOutput {
 	 * this is the path of the splitted audio segment that corresponds to this transcription
 	 */
 	audio_file: string;
+	/**
+	 * original text before translation
+	 */
+	originalText?: string;
 }
 
 export function mergeTranscriptionWithRef(

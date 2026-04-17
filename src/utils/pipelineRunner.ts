@@ -102,6 +102,18 @@ export async function runPipeline<Input extends z.ZodObject>(
 				`Error in step ${stepIndex} (${pipeline.steps[stepIndex]?.name}):`,
 				inspect(error),
 			);
+			stepStatuses[stepIndex] = "error";
+			if (tmpDirectory && onCheckpointSave) {
+				await onCheckpointSave({
+					pipelineName: pipeline.name,
+					currentStepIndex: stepIndex - 1,
+					stepStatuses,
+					stepNames: pipeline.steps.map((s) => s.name),
+					stepVersions: pipeline.steps.map((s) => s.version ?? 0),
+					previousOutputs,
+					input: pipelineArgs.input,
+				});
+			}
 			throw error;
 		}
 		checkCancelled();

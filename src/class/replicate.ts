@@ -193,10 +193,12 @@ export class ReplicateUtil {
 		const systemPrompt = `You are a professional translator specializing in anime and media content. Translate the following text from ${sourceLang} to ${targetLang}. Preserve the meaning, tone, and context as naturally as possible. Only output the translated text, no explanations.`;
 
 		const { text: translatedText } = await generateText({
-			model: this.hackclub("meta-llama/llama-3.1-8b-instruct"),
+			model: this.hackclub("qwen/qwen3-32b"),
 			prompt: textToTranslate,
 			system: systemPrompt,
 		});
+
+		logger.debug("Translated text: ", translatedText);
 
 		const translatedChunks = translatedText
 			.split("\n")
@@ -219,47 +221,52 @@ export class ReplicateUtil {
 		language,
 	}: {
 		text: string; // The text to be converted to speech
-		ref_audioUrl: string;
+		ref_audioUrl?: string; // For voice cloning, provide reference audio. If not provided, uses TTS without cloning.
 		textInOrginalLanguage?: string; // For better voice cloning results, provide the text in the original language of the reference audio. pre-translation if necessary.
 		language: string;
 	}): Promise<Buffer> {
+		const hasRefAudio = ref_audioUrl && ref_audioUrl.trim() !== "";
+
+		logger.debug(
+			`Generating voice for text: "${text}" with reference audio: ${ref_audioUrl ?? "none"} in language: ${language}`,
+			{ text, ref_audioUrl, language },
+		);
 		if (qwenTtsSupportedLanguages.includes(language)) {
-			const input = {
-				mode: "voice_cloning",
-				text,
-				language: "auto", // Let the model auto-detect the language for better results
-				reference_audio: ref_audioUrl.startsWith("http")
-					? ref_audioUrl
-					: `data:audio/wav;base64,${(await readFile(ref_audioUrl)).toString("base64")}`,
-				// For better voice cloning results, you can specify the language if known
-				reference_text: textInOrginalLanguage,
-			};
+			const input = hasRefAudio
+				? {
+						mode: "voice_cloning",
+						text,
+						language: "auto",
+						reference_audio: ref_audioUrl!.startsWith("http")
+							? ref_audioUrl
+							: `data:audio/wav;base64,${(await readFile(ref_audioUrl!)).toString("base64")}`,
+						reference_text: textInOrginalLanguage,
+					}
+				: {
+						text,
+						language: "auto",
+					};
 
 			const output = (await this.replicate.run("qwen/qwen3-tts", {
 				input,
 			})) as any;
 			logger.debug("Qwen TTS output: ", output);
 
-			// To access the file URL:
-			// console.log(output.url()); //=> "http://example.com"
-
-			// To write the file to disk:
-			return output.toBuffer();
+			return output;
 		} else {
-			const { pitch, speed, volume } = detectVoiceMetadataForMinimax(
-				await readFile(ref_audioUrl),
-			);
+			const { pitch, speed, volume } = hasRefAudio
+				? detectVoiceMetadataForMinimax(await readFile(ref_audioUrl!))
+				: { pitch: 0, speed: 1, volume: 1 };
 			const input = {
 				text: text,
 				pitch: pitch,
 				speed: speed,
 				volume: volume,
 				bitrate: 128000,
-				channel: "dual",
+				channel: "stereo",
 				voice_id: "Deep_Voice_Man",
 				sample_rate: 32000,
 				audio_format: "mp3",
-				// language_boost: language,
 				subtitle_enable: true,
 				english_normalization: true,
 			};
@@ -269,12 +276,7 @@ export class ReplicateUtil {
 			})) as any;
 
 			logger.debug("Minimax TTS output: ", output);
-			// To access the file URL:
-			// console.log(output.url()); //=> "http://example.com"
-
-			// To write the file to disk:
-			// fs.writeFile("my-image.png", output);
-			return output.toBuffer();
+			return output;
 		}
 	}
 }

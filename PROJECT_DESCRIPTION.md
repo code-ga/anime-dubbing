@@ -59,9 +59,9 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 
 ### src/pages/PipelineApp.tsx
 - Generic UI page component for running any pipeline
-- Props: pipeline (Pipeline), input (parsed input), outputFile (string), args (optional Record<string, unknown>), onCancel (optional callback), checkpoint (optional CheckpointData), tmpDirectory (optional string)
+- Props: pipeline (Pipeline), input (parsed input), outputFile (string), args (optional `Record<string, unknown>`), onCancel (optional callback), checkpoint (optional CheckpointData), tmpDirectory (optional string)
 - Handles pipeline execution with useEffect and AbortController for cancellation
-- Passes args to runPipeline including outputFile merged with custom args
+- Constructs pipelineArgs: merges outputFile, input fields, and custom args; ensures `replicateUtil` is available by using passed args or creating new ReplicateUtil instance
 - Displays PipelineProgress + LogViewer in ALL states: running, completed, cancelled, error
 - Keyboard handler enables Ctrl+C cancellation (requires focusable container)
 - Reusable across different pipeline types
@@ -97,18 +97,30 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 - Input: inputFile, outputFile
 - Output: outputFile
 
-### src/pipelines/dubbing.ts
-- Pipeline for complete dubbing workflow (extract audio → transcribe → translate)
-- Uses ReplicateUtil for AI processing (Whisper transcription, translation)
-- Input: inputFile, outputFile, targetLanguage, tmpDirectory, sourceLanguage
-- Steps:
-  1. "Setup Environment" - Initialize pipeline environment
-  2. "Convert to WAV" - Convert video audio to WAV format
-  3. "Detect and Split by Silence" - Split audio at silence points
-  4. "Seperate Speech from Audio" - Isolate speech from background (placeholder)
-  5. "Transcribe Audio" - Convert speech to text using Whisper
-  6. "Translate Transcript" - Translate text to target language using LLM
-- Output: transcriptions array with text, timing, and reference audio paths
+### Pipeline Steps (Dubbing)
+1. "Setup Environment" - Initialize pipeline environment
+2. "Convert to WAV" - Convert video audio to WAV format using FFmpeg
+3. "Detect and Split by Silence" - Split audio at silence points using FFmpeg silencedetect filter
+4. "Seperate Speech from Audio" - Placeholder step (currently passes through files unchanged); originally intended for speech isolation using SAM-audio-large model via Replicate
+5. "Transcribe Audio" - Convert speech to text using Whisper via Replicate; creates `TranscriptionWithRef[]` with text, timing (start/end), and reference audio segment paths
+6. "Translate Transcript" - Translate transcribed text to target language using Llama 3.1 via OpenRouter/Hack Club AI; returns updated transcriptions with translated text; also stores original text in `originalText` field
+7. "Save Subtitles to SRT" - If subtitleDirectory is provided, saves original.srt (original language) and translated.srt (target language) to the specified directory; skips if not provided
+8. "Generate Dubbed Audio" - Generate TTS audio for each translated segment using `ReplicateUtil.generateVoice()`; chooses Qwen TTS (voice cloning) or MiniMax (preset voices) based on language support; saves individual MP3 files to `tmpDirectory/dubbed_audio/dubbed_0000.mp3` etc.; returns array of `{ path, startTime, originalDuration }` where `originalDuration = end - start` from original transcription
+9. "Merge Segments to Single Audio" - Concatenate all dubbed audio segments with timing alignment using `mergeAudioSegmentsWithTiming()`; for each segment, probes actual dubbed duration; if different from `originalDuration`, applies speed adjustment (atempo filter) to match original length; constructs concat list with silence gaps to preserve original `startTime` spacing between segments; cleans up temp adjusted/silence files; output saved to `tmpDirectory/dubbed_full.mp3`
+10. "Merge Audio with Video" - Replace original audio with dubbed track using `mergeAudioWithVideo()`; copies video stream (`-c:v copy`), maps audio from second input (`-map 1:a:0`), uses `-shortest` to end when shorter stream ends; final output written to `input.outputFile` (typically `.mp4`)
+- Output: `outputFile` (path to final dubbed video)
+- Checkpoint-aware: Adding steps changes step count; existing checkpoints reset from step 0 (handled by `loadCheckpoint` step name validation)
+
+### Known Limitations & Future Work (Dubbing)
+1. **Timing alignment (partially solved)**: `mergeAudioSegmentsWithTiming()` now adjusts each TTS segment's speed to match original duration using FFmpeg atempo filter, and inserts silence gaps to preserve original `startTime` positions. Limitations:
+   - Speed factor clamped to [0.5, 2.0]; if TTS is >2x or <0.5x original duration, audio will still drift (would need chained atempo or more aggressive strategies like segment splitting/stitching)
+   - Quality degradation from time-stretching may occur especially at extreme speed factors
+   - Gap insertion assumes adjusted segment end equals `startTime + originalDuration`; rounding errors may accumulate slightly
+2. **Speaker diarization**: Current transcription doesn't distinguish multiple speakers; entire video uses single voice clone. Future: enable diarization (Whisper `diarize_audio` + HF token), group segments by speaker, optionally assign different voices.
+3. **Output format options**: Currently hardcoded to MP4 video with replaced audio. Future: allow audio-only output (MP3/WAV), separate audio+video files, or subtitle track generation.
+4. **Voice selection**: TTS automatically chooses Qwen (voice cloning) or MiniMax (preset) based on language. Future: CLI flag to force specific TTS provider, voice presets, or custom voice cloning parameters.
+5. **Speech separation placeholder**: Step 4 "Seperate Speech from Audio" is currently a passthrough; if enabled later, will need index adjustment in subsequent steps (currently step 5 accesses `previousOutputs[3]`, which would become the separated output).
+6. **Audio-video sync edge cases**: `mergeAudioWithVideo()` uses `-shortest`; if dubbed audio still shorter than video (due to clamped speed adjustment), video cuts early; if longer (unlikely after timing alignment), audio gets truncated. Future: add offset parameter, or analyze/adjust final audio duration before merge.
 
 ### src/pipelines/index.ts
 - Exports all pipeline definitions
@@ -130,10 +142,12 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 
 ### src/commands/dubbing.tsx
 - Dubbing command entry point
-- Defines CLI options (inputFile, tmpDirectory, outputFile)
-- Imports pipeline and renders PipelineApp with renderToCli
-- Checks for existing checkpoint on startup using loadCheckpoint
-- Passes checkpoint and tmpDirectory to PipelineApp for resume functionality
+- Defines CLI options: inputFile (required), tmpDirectory (default: ./tmp), outputFile (default: output.mp4), targetLanguage (default: en), sourceLanguage (default: None), subtitleDirectory (optional, -S flag)
+- Creates ReplicateUtil instance and passes via args prop to PipelineApp
+- Loads checkpoint from tmpDirectory and passes to PipelineApp for resume support
+- Renders PipelineApp with renderToCli for TUI display
+- Output is final dubbed video file (MP4 format)
+- If subtitleDirectory is provided, saves original.srt and translated.srt to that directory
 
 ### src/utils/audioSplit.ts
 - Utility for splitting audio files by silence detection
@@ -143,19 +157,36 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
   - Options: inputPath, outputDir, silenceThreshold (default -40dB), minSilenceDuration (default 0.5s), minSegmentDuration (default 0.3s)
   - Returns array of output file paths
 - SilenceSegment interface: { start: number, end: number, duration: number }
+- TranscriptionWithRef interface extends TranscriptionOutput with:
+  - ref_audio: string (original audio path)
+  - audio_file: string (split audio segment path)
+  - originalText?: string (original text before translation, set in Translate Transcript step)
 
 ### convert/ffmpeg.ts
-- Handler for converting video files to WAV audio
-- Uses fluent-ffmpeg library for audio conversion
+- FFmpeg utility functions for audio/video processing using fluent-ffmpeg
+- Functions:
+  - `convertToWav(inputPath, outputPath)` - Convert video audio to WAV (actually outputs MP3 via .toFormat("mp3"))
+  - `getAudioDuration(filePath)` - Probe audio file to get duration in seconds using ffprobe
+  - `mergeAudioSegments(audioFiles, outputPath)` - Simple concatenation without timing; takes `AudioSegmentInput[]` (path, startTime), sorts by startTime, writes concat list, uses `-c copy` for lossless merge
+  - `adjustAudioSpeed(audioPath, outputPath, speedFactor)` - Time-stretch audio using FFmpeg atempo filter; clamps factor to [0.5, 2.0]; outputs adjusted file
+  - `createSilenceFile(outputPath, durationSeconds)` - Generate silent audio (stereo, 44.1kHz) of specified duration using anullsrc lavfi source
+  - `mergeAudioSegmentsWithTiming(audioFiles, outputPath, tmpDir)` - Advanced merge with timing alignment: speeds up/slows down each segment to match original duration (using `originalDuration` property), inserts silence gaps between segments based on original `startTime` offsets; cleans up temp adjusted/silence files after merge
+  - `mergeAudioWithVideo(videoPath, audioPath, outputPath)` - Merge dubbed audio with original video; copies video stream (`-c:v copy`), maps audio from second input (`-map 1:a:0`), uses `-shortest` to end at shorter of video/audio durations
+- Interfaces:
+  - `AudioSegmentInput`: `{ path: string; startTime: number }`
+  - Extended segment for timing: `{ path: string; startTime: number; originalDuration?: number }`
 
 ### src/class/replicate.ts
-- ReplicateUtil class for AI-powered audio processing
-- Uses Replicate API for Whisper transcription and speech isolation
-- Uses Hack Club AI (OpenRouter) for translation
+- ReplicateUtil class for AI-powered audio and text processing
+- Uses Replicate API for Whisper transcription, speech isolation, and TTS generation
+- Uses Hack Club AI (OpenRouter) for translation via ai SDK
 - Methods:
-  - `isolationSpeechFromAudio(audioUrl)` - Separate speech from background audio using SAM-audio-large model
-  - `transcribeAudio(audioUrl, sourceLanguage)` - Transcribe audio using Incredibly Fast Whisper model, returns TranscriptionOutput[]
-  - `translateTranscript(transcriptions, targetLanguage, sourceLanguage)` - Translate transcriptions using LLM, returns updated TranscriptionOutput[]
+  - `isolationSpeechFromAudio(audioUrl)` - Separate speech from background using SAM-audio-large (currently unused, placeholder in pipeline)
+  - `transcribeAudio(audioUrl, sourceLanguage)` - Transcribe audio using Incredibly Fast Whisper model; returns TranscriptionOutput[] with text, start, end, duration, and optional words with speaker
+  - `translateTranscript(transcriptions, targetLanguage, sourceLanguage)` - Translate transcriptions using Llama 3.1 via OpenRouter; preserves original if translation missing; returns array with translated text
+  - `generateVoice({ text, ref_audioUrl, textInOrginalLanguage, language })` - Generate TTS audio using voice cloning; chooses between Qwen TTS (for supported languages: en, ja, ko, zh, es, fr, de, it, pt, ru, ar, hi) or MiniMax speech-02-turbo (fallback for other languages); returns Buffer (already base64-decoded) ready to write to disk
+- Supports both HTTP URLs and local file paths for audio input (converts local files to base64 data URLs)
+- Transcription output includes word-level timestamps and speaker diarization data (when enabled)
 
 ## Feature: Pipeline System with Steps, Cancellation, and Data Passing
 
@@ -172,14 +203,19 @@ The dubbing command displays a real-time progress UI:
 Each step handler receives an object with:
 ```typescript
 {
-  input: { inputFile: string, outputFile: string }, // parsed input from schema
+  input: { inputFile: string, outputFile: string, targetLanguage: string, tmpDirectory: string, sourceLanguage: string }, // parsed input from schema
   context: {
     signal: AbortSignal, // for cancellation
-    previousOutputs: Record<number, unknown>, // outputs from previous steps
-    args: Record<string, unknown> // args passed from PipelineApp (outputFile, etc.)
+    previousOutputs: Record<number, unknown>, // outputs from previous steps (index 0 = step 1, index N = step N+1)
+    args: Record<string, unknown> // args passed from PipelineApp (includes outputFile, tmpDirectory, replicateUtil, etc.)
   }
 }
 ```
+**Indexing note:** Steps access prior outputs via 0-based indices. For the dubbing pipeline:
+- Step 6 (Translate) reads `previousOutputs[4]` (Transcribe Audio output)
+- Step 7 (Generate Dubbed Audio) reads `previousOutputs[5]` (Translate Transcript output)
+- Step 8 (Merge Segments) reads `previousOutputs[6]` (Generate Dubbed Audio output)
+- Step 9 (Merge with Video) reads `previousOutputs[7]` (Merge Segments output)
 
 ### Example: Step can access previous step output
 ```typescript
@@ -208,9 +244,16 @@ bun run src/index.tsx dubbing --inputFile video.mp4 --outputFile audio.wav
 # Press Ctrl+C to cancel during execution
 ```
 
-### Pipeline Steps
-1. "Extract Audio Stream" - Use FFmpeg to demux the video file and extract the audio stream
-2. "Convert to WAV" - Convert the audio stream to WAV format for further processing
+### Pipeline Steps (Dubbing)
+1. "Setup Environment" - Initialize pipeline environment
+2. "Convert to WAV" - Convert video audio to WAV format using FFmpeg
+3. "Detect and Split by Silence" - Split audio at silence points
+4. "Seperate Speech from Audio" - Placeholder (pass-through); originally intended for speech isolation
+5. "Transcribe Audio" - Convert speech to text using Whisper; outputs transcriptions with timing and reference audio
+6. "Translate Transcript" - Translate text to target language using LLM; outputs translated transcriptions
+7. "Generate Dubbed Audio" - Generate TTS for each segment using ReplicateUtil.generateVoice(); outputs array of audio file paths with startTime
+8. "Merge Segments to Single Audio" - Concatenate dubbed segments into single audio file using mergeAudioSegments()
+9. "Merge Audio with Video" - Combine dubbed audio with original video using mergeAudioWithVideo(); outputs final video file
 
 ## Feature: Log Viewer
 
@@ -309,3 +352,5 @@ User runs: bun run src/index.tsx dubbing --inputFile video.mp4 --tmpDirectory ./
 - Added pipeline checkpoint/resume feature - pipeline can resume from last completed step (2026-04-16)
 - Added step name validation in checkpoint - changing step name adjusts checkpoint to re-run from that step while preserving earlier outputs (2026-04-16)
 - Added step versioning for checkpoint - developers can add `version` property to step to mark changes; version mismatch triggers resume from that step (2026-04-17)
+- Added SRT subtitle export feature - use `--subtitleDirectory` or `-S` flag to save original.srt and translated.srt to specified directory (2026-04-17)
+- Added checkpoint recovery from step errors - when a step fails, checkpoint is saved with error status, allowing re-run to resume from the failed step (2026-04-17)
