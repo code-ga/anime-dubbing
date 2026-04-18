@@ -5,8 +5,8 @@ import z from "zod";
 import type { ReplicateUtil } from "../class/replicate";
 import {
 	convertToWav,
-	mergeAudioSegmentsWithTiming,
 	mergeAudioWithVideo,
+	processAndMergeDubbedAudio,
 } from "../convert/ffmpeg";
 import { definePipeline } from "../types/pipeline";
 import {
@@ -73,26 +73,26 @@ const dubbingPipeline = definePipeline({
 				"Detect silent parts in the audio and split the audio into segments based on silence.",
 			handler: async ({ input, context }) => {
 				context.signal?.throwIfAborted();
-				logger.debug(
-					`Detect and Split by Silence step: input.outputFile = ${inspect(context.previousOutputs[1])} context.args.tmpDirectory = ${context.args.tmpDirectory}`,
-				);
-				const currentStepTmpDir = path.join(
-					context.args.tmpDirectory as string,
-					`step_${Object.keys(context.previousOutputs).length}`,
-				);
-				await mkdir(currentStepTmpDir, { recursive: true });
-				const outputFiles = await splitAudioBySilence({
-					inputPath: (context.previousOutputs[1] as { outputFile: string })
-						?.outputFile as string,
-					outputDir: currentStepTmpDir,
-					silenceThreshold: -40,
-					minSilenceDuration: 0.5,
-					minSegmentDuration: 0.3,
-				});
-				logger.debug(
-					`Detect and Split by Silence step: outputFiles = ${outputFiles}`,
-				);
-				return { outputFile: outputFiles };
+				// logger.debug(
+				// 	`Detect and Split by Silence step: input.outputFile = ${inspect(context.previousOutputs[1])} context.args.tmpDirectory = ${context.args.tmpDirectory}`,
+				// );
+				// const currentStepTmpDir = path.join(
+				// 	context.args.tmpDirectory as string,
+				// 	`step_${Object.keys(context.previousOutputs).length}`,
+				// );
+				// await mkdir(currentStepTmpDir, { recursive: true });
+				// const outputFiles = await splitAudioBySilence({
+				// 	inputPath: (context.previousOutputs[1] as { outputFile: string })
+				// 		?.outputFile as string,
+				// 	outputDir: currentStepTmpDir,
+				// 	silenceThreshold: -40,
+				// 	minSilenceDuration: 0.5,
+				// 	minSegmentDuration: 0.3,
+				// });
+				// logger.debug(
+				// 	`Detect and Split by Silence step: outputFiles = ${outputFiles}`,
+				// );
+				return { outputFile: [(context.previousOutputs[1] as { outputFile: string })?.outputFile as string] };
 			},
 		},
 		{
@@ -105,33 +105,11 @@ const dubbingPipeline = definePipeline({
 					logger.debug(
 						`Seperate Speech from Audio step: input.outputFile = ${input.outputFile}`,
 					);
-					// const replicate = context.args.replicateUtil as ReplicateUtil;
 					const files = [];
 					for (const file of ((
 						context.previousOutputs[2] as { outputFile: string[] }
 					)?.outputFile as string[]) || []) {
 						logger.debug(`Processing file: ${file}`);
-						// const separatedAudioFile = await replicate.isolationSpeechFromAudio(
-						// 	input.outputFile,
-						// );
-						// const outputFiles = [];
-						// const currentStepTmpDir = path.join(
-						// 	context.args.tmpDirectory as string,
-						// 	`step_${Object.keys(context.previousOutputs).length}`,
-						// );
-						// await mkdir(currentStepTmpDir, { recursive: true });
-						// for (const [index, item] of Object.entries(separatedAudioFile)) {
-						// 	const outputPath = path.join(
-						// 		currentStepTmpDir,
-						// 		`output_${index}.wav`,
-						// 	);
-						// 	await writeFile(outputPath, item);
-						// 	outputFiles.push(outputPath);
-						// }
-						// logger.debug(
-						// 	`Seperate Speech from Audio step: outputFiles = `,
-						// 	inspect(separatedAudioFile, { depth: null }),
-						// );
 						files.push(file);
 					}
 					return { outputFile: files };
@@ -418,11 +396,11 @@ const dubbingPipeline = definePipeline({
 		{
 			name: "Merge Segments to Single Audio",
 			description:
-				"Merge all generated TTS audio segments into one audio file with timing alignment.",
+				"Mix all generated TTS audio segments with original background audio.",
 			handler: async ({ input, context }) => {
 				context.signal?.throwIfAborted();
 				const audioFiles = (
-					context.previousOutputs[6] as {
+					context.previousOutputs[7] as {
 						audioFiles: {
 							path: string;
 							startTime: number;
@@ -443,13 +421,23 @@ const dubbingPipeline = definePipeline({
 				const tmpDir = context.args.tmpDirectory as string;
 				const outputPath = path.join(tmpDir, "dubbed_full.mp3");
 
-				const mergedPath = await mergeAudioSegmentsWithTiming(
+				// Get original audio from Step 2 (Convert to WAV output)
+				const originalAudioPath = (context.previousOutputs[1] as {
+					outputFile: string;
+				})?.outputFile as string;
+
+				if (!originalAudioPath) {
+					throw new Error("Original audio path not found in previous outputs");
+				}
+
+				const mergedPath = await processAndMergeDubbedAudio(
 					audioFiles,
+					originalAudioPath,
 					outputPath,
 					tmpDir,
 				);
 
-				logger.debug(`Merged audio to: ${mergedPath}`);
+				logger.debug(`Mixed audio to: ${mergedPath}`);
 				return { outputFile: mergedPath };
 			},
 		},
@@ -458,7 +446,7 @@ const dubbingPipeline = definePipeline({
 			description: "Combine the dubbed audio with the original video.",
 			handler: async ({ input, context }) => {
 				context.signal?.throwIfAborted();
-				const audioPath = (context.previousOutputs[7] as { outputFile: string })
+				const audioPath = (context.previousOutputs[8] as { outputFile: string })
 					?.outputFile as string;
 
 				if (!audioPath) {

@@ -35,55 +35,6 @@ export async function convertToWav(inputPath: string, outputPath: string) {
 	});
 }
 
-export interface AudioSegmentInput {
-	path: string;
-	startTime: number;
-}
-
-export async function mergeAudioSegments(
-	audioFiles: AudioSegmentInput[],
-	outputPath: string,
-): Promise<string> {
-	logger.debug(`mergeAudioSegments called with ${audioFiles.length} files`);
-
-	if (audioFiles.length === 0) {
-		throw new Error("No audio files to merge");
-	}
-
-	if (audioFiles.length === 1 && audioFiles[0]) {
-		await fs.copyFile(audioFiles[0]?.path, outputPath);
-		return outputPath;
-	}
-
-	const tempListPath = `${outputPath}.txt`;
-	const listContent = audioFiles
-		.sort((a, b) => a.startTime - b.startTime)
-		.map((f) => `file '${f.path}'`)
-		.join("\n");
-	await fs.writeFile(tempListPath, listContent);
-
-	return new Promise<string>((resolve, reject) => {
-		ffmpeg()
-			.input(tempListPath)
-			.inputOptions(["-f", "concat", "-safe", "0"])
-			.outputOptions(["-c", "copy"])
-			.on("error", (err) => {
-				logger.error(`Error merging audio segments: ${err.message}`);
-				reject(err);
-			})
-			.on("end", async () => {
-				try {
-					await fs.unlink(tempListPath);
-				} catch {
-					// ignore cleanup error
-				}
-				logger.info(`Merged audio segments saved to: ${outputPath}`);
-				resolve(outputPath);
-			})
-			.save(outputPath);
-	});
-}
-
 export async function mergeAudioWithVideo(
 	videoPath: string,
 	audioPath: string,
@@ -135,203 +86,223 @@ export async function getAudioDuration(filePath: string): Promise<number> {
  * Speed factor = originalDuration / dubbedDuration.
  * Returns path to adjusted audio file.
  */
-export async function adjustAudioSpeed(
-	audioPath: string,
-	outputPath: string,
-	speedFactor: number,
-): Promise<string> {
-	logger.debug(
-		`adjustAudioSpeed: ${audioPath} -> ${outputPath}, factor: ${speedFactor}`,
-	);
-
-	// Clamp speed factor to atempo supported range (0.5 to 2.0)
-	// For extreme differences, chain multiple atempo filters
-	const clampedFactor = Math.max(0.5, Math.min(2.0, speedFactor));
-
-	return new Promise<string>((resolve, reject) => {
-		ffmpeg(audioPath)
-			.outputOptions(["-filter:a", `atempo=${clampedFactor.toFixed(3)}`])
-			.on("error", (err) => {
-				logger.error(`Error adjusting audio speed: ${err.message}`);
-				reject(err);
-			})
-			.on("end", () => {
-				logger.info(`Speed-adjusted audio saved to: ${outputPath}`);
-				resolve(outputPath);
-			})
-			.save(outputPath);
-	});
-}
-
-/**
- * Merges audio segments with precise timing control.
- * For each segment, applies speed adjustment to match original duration (if originalDuration provided).
- * Uses gaps between startTimes to insert silence, maintaining original video timing.
- */
-export async function mergeAudioSegmentsWithTiming(
-	audioFiles: {
+export async function processAndMergeDubbedAudio(
+	ttsSegments: {
 		path: string;
 		startTime: number;
 		originalDuration?: number;
 	}[],
+	originalAudioPath: string,
 	outputPath: string,
 	tmpDir: string,
 ): Promise<string> {
 	logger.debug(
-		`mergeAudioSegmentsWithTiming: merging ${audioFiles.length} segments with timing alignment`,
+		`processAndMergeDubbedAudio: mixing ${ttsSegments.length} TTS segments with original audio`,
 	);
 
-	if (audioFiles.length === 0) {
-		throw new Error("No audio files to merge");
+	if (ttsSegments.length === 0) {
+		throw new Error("No TTS segments to mix");
 	}
 
-	// Sort by startTime
-	const sortedFiles = [...audioFiles].sort((a, b) => a.startTime - b.startTime);
+	const originalTotalDuration = await getAudioDuration(originalAudioPath);
+	logger.debug(`Original audio duration: ${originalTotalDuration}s`);
 
-	// If only one file, optionally adjust speed, then copy
-	if (sortedFiles.length === 1) {
-		const file = sortedFiles[0];
-		if (!file?.path) {
-			throw new Error("Audio file path is undefined");
-		}
-		if (file.originalDuration) {
-			const dubbedDuration = await getAudioDuration(file.path);
-			const speedFactor = file.originalDuration / dubbedDuration;
-			if (Math.abs(speedFactor - 1.0) > 0.01) {
-				const adjustedPath = path.join(tmpDir, "adjusted_0.mp3");
-				return await adjustAudioSpeed(file.path, adjustedPath, speedFactor);
-			}
-		}
-		await fs.copyFile(file.path, outputPath);
-		return outputPath;
-	}
+	const sortedSegments = [...ttsSegments].sort(
+		(a, b) => a.startTime - b.startTime,
+	);
 
-	// Process each segment: adjust speed to match original duration, track gaps
-	const adjustedFiles: {
+	const adjustedSegmentPaths: {
 		path: string;
 		startTime: number;
-		originalDuration?: number;
+		duration: number;
 	}[] = [];
-	const tempDir = path.dirname(outputPath);
+	const tempFilesToClean: string[] = [];
 
-	for (let i = 0; i < sortedFiles.length; i++) {
-		const file = sortedFiles[i];
-		if (!file?.path) {
-			throw new Error(`Audio file path is undefined for segment ${i}`);
-		}
-		const originalDuration = file.originalDuration ?? 0;
+	const chunkSize = 5;
+	for (let i = 0; i < sortedSegments.length; i += chunkSize) {
+		const chunk = sortedSegments.slice(i, i + chunkSize);
+		await Promise.all(
+			chunk.map(async (seg, chunkIdx) => {
+				const index = i + chunkIdx;
+				const dubbedDuration = await getAudioDuration(seg.path);
+				const originalDuration = seg.originalDuration ?? dubbedDuration;
 
-		// Get actual duration of dubbed audio
-		const dubbedDuration = await getAudioDuration(file.path);
+				let speedFactor = 1.0;
+				if (
+					originalDuration > 0 &&
+					Math.abs(dubbedDuration - originalDuration) > 0.01
+				) {
+					speedFactor = dubbedDuration / originalDuration;
+				}
 
-		if (
-			originalDuration > 0 &&
-			Math.abs(dubbedDuration - originalDuration) > 0.01
-		) {
-			// Speed adjustment needed
-			const speedFactor = originalDuration / dubbedDuration;
-			const adjustedPath = path.join(
-				tempDir,
-				`adjusted_${String(i).padStart(4, "0")}.mp3`,
-			);
-			await adjustAudioSpeed(file.path, adjustedPath, speedFactor);
-			adjustedFiles.push({
-				path: adjustedPath,
-				startTime: file.startTime,
-				originalDuration,
-			});
-		} else {
-			// No adjustment needed
-			adjustedFiles.push({
-				path: file.path,
-				startTime: file.startTime,
-				originalDuration,
-			});
-		}
-	}
+				const targetDuration =
+					originalDuration > 0 ? originalDuration : dubbedDuration;
 
-	// Build concat list with silence gaps
-	const silenceFiles: string[] = [];
-	for (let i = 0; i < adjustedFiles.length; i++) {
-		const current = adjustedFiles[i];
-		if (!current?.path) {
-			throw new Error(`Adjusted file path is undefined for segment ${i}`);
-		}
-		const next = adjustedFiles[i + 1];
-		if (!next?.path) {
-			throw new Error(`Next file path is undefined for segment ${i + 1}`);
-		}
+				const filterArr: string[] = [];
 
-		// Add current segment
-		silenceFiles.push(`file '${current.path}'`);
+				if (Math.abs(speedFactor - 1.0) > 0.01) {
+					let factor = speedFactor;
+					while (factor > 2.0) {
+						filterArr.push(`atempo=2.0`);
+						factor /= 2.0;
+					}
+					while (factor < 0.5) {
+						filterArr.push(`atempo=0.5`);
+						factor /= 0.5;
+					}
+					filterArr.push(`atempo=${factor.toFixed(3)}`);
+				}
 
-		// If there's a gap to next segment, insert silence
-		if (next && next.startTime > current.startTime) {
-			const currentEnd = current.startTime + (current.originalDuration || 0);
-			const gap = next.startTime - currentEnd;
+				const fadeDuration = 0.005;
+				filterArr.push(`afade=t=in:st=0:d=${fadeDuration}`);
+				if (targetDuration > fadeDuration * 2) {
+					const fadeOutStart = targetDuration - fadeDuration;
+					filterArr.push(`afade=t=out:st=${fadeOutStart}:d=${fadeDuration}`);
+				}
 
-			if (gap > 0.05) {
-				// Create silence file for gap (in seconds)
-				const silencePath = path.join(
-					tempDir,
-					`silence_${String(i).padStart(4, "0")}.mp3`,
+				filterArr.push(`aformat=channel_layouts=stereo:sample_rates=44100`);
+				const filterStr = filterArr.join(",");
+
+				const adjustedPath = path.join(
+					tmpDir,
+					`adjusted_${String(index).padStart(4, "0")}.wav`,
 				);
-				await createSilenceFile(silencePath, gap);
-				silenceFiles.push(`file '${silencePath}'`);
-			}
-		}
+
+				await new Promise<void>((resolve, reject) => {
+					ffmpeg(seg.path)
+						.outputOptions([
+							"-filter_complex",
+							`[0:a]${filterStr}[out]`,
+							"-map",
+							"[out]",
+							"-ar",
+							"44100",
+							"-ac",
+							"2",
+							"-c:a",
+							"pcm_s16le",
+						])
+						.on("error", (err) => {
+							logger.error(
+								`Error adjusting segment ${index}: ${err.message}`,
+							);
+							reject(err);
+						})
+						.on("end", () => resolve())
+						.save(adjustedPath);
+				});
+
+				adjustedSegmentPaths.push({
+					path: adjustedPath,
+					startTime: seg.startTime,
+					duration: targetDuration,
+				});
+				tempFilesToClean.push(adjustedPath);
+			}),
+		);
 	}
 
-	// Write concat list
-	const listPath = `${outputPath}.list.txt`;
-	await fs.writeFile(listPath, silenceFiles.join("\n"));
+	adjustedSegmentPaths.sort((a, b) => a.startTime - b.startTime);
 
-	return new Promise<string>((resolve, reject) => {
+	const concatListPath = path.join(tmpDir, "concat.txt");
+	const silenceFilesMap = new Map<number, string>();
+
+	let cursor = 0;
+	const concatLines: string[] = [];
+
+	const getSilenceFile = async (gapSeconds: number): Promise<string> => {
+		const gap = Number(gapSeconds.toFixed(3));
+		if (silenceFilesMap.has(gap)) return silenceFilesMap.get(gap)!;
+
+		const silencePath = path.join(tmpDir, `silence_${gap}.wav`);
+		const { exec } = await import("node:child_process");
+		const { promisify } = await import("node:util");
+		const execAsync = promisify(exec);
+
+		try {
+			await execAsync(`ffmpeg -y -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -t ${gap} -c:a pcm_s16le "${silencePath}"`);
+		} catch (err: any) {
+			logger.error(`Error creating silence file: ${err.message}`);
+			throw err;
+		}
+
+		silenceFilesMap.set(gap, silencePath);
+		tempFilesToClean.push(silencePath);
+		return silencePath;
+	};
+
+	for (let i = 0; i < adjustedSegmentPaths.length; i++) {
+		const seg = adjustedSegmentPaths[i];
+		if (!seg) continue;
+		let safeStartTime = seg.startTime;
+		if (safeStartTime < cursor) {
+			logger.warn(
+				`Segment ${i} overlaps with previous! Adjusting start time from ${seg.startTime} to ${cursor}`,
+			);
+			safeStartTime = cursor;
+		}
+
+		if (safeStartTime > cursor + 0.001) {
+			const gap = safeStartTime - cursor;
+			const silencePath = await getSilenceFile(gap);
+			concatLines.push(`file '${silencePath.replace(/\\/g, "/")}'`);
+			cursor = safeStartTime;
+		}
+
+		concatLines.push(`file '${seg.path.replace(/\\/g, "/")}'`);
+		cursor += seg.duration;
+	}
+
+	const finalGap = originalTotalDuration - cursor;
+	if (finalGap > 0.001) {
+		const finalSilencePath = await getSilenceFile(finalGap);
+		concatLines.push(`file '${finalSilencePath.replace(/\\/g, "/")}'`);
+	}
+
+	await fs.writeFile(concatListPath, concatLines.join("\n"));
+	tempFilesToClean.push(concatListPath);
+
+	const dubbedTrackPath = path.join(tmpDir, "dubbed_track.wav");
+	await new Promise<void>((resolve, reject) => {
 		ffmpeg()
-			.input(listPath)
+			.input(concatListPath)
 			.inputOptions(["-f", "concat", "-safe", "0"])
-			.outputOptions(["-c", "copy"])
+			.outputOptions(["-c:a", "pcm_s16le"])
 			.on("error", (err) => {
-				logger.error(`Error merging with timing: ${err.message}`);
+				logger.error(`Error concatenating dubbed track: ${err.message}`);
 				reject(err);
 			})
-			.on("end", async () => {
-				try {
-					await fs.unlink(listPath);
-					// Cleanup temp silence/adjusted files
-					for (const line of silenceFiles) {
-						const filePath = line.replace("file '", "").replace("'", "");
-						if (
-							filePath.includes("adjusted_") ||
-							filePath.includes("silence_")
-						) {
-							await fs.unlink(filePath).catch(() => {});
-						}
-					}
-				} catch {
-					// ignore cleanup errors
-				}
-				logger.info(`Merged audio with timing saved to: ${outputPath}`);
-				resolve(outputPath);
-			})
-			.save(outputPath);
+			.on("end", () => resolve())
+			.save(dubbedTrackPath);
 	});
-}
+	tempFilesToClean.push(dubbedTrackPath);
 
-export async function createSilenceFile(
-	outputPath: string,
-	durationSeconds: number,
-): Promise<void> {
-	return new Promise((resolve, reject) => {
+	await new Promise<void>((resolve, reject) => {
 		ffmpeg()
-			.input("anullsrc=channel_layout=stereo:sample_rate=44100")
-			.inputOptions(["-f", "lavfi"])
-			.setDuration(durationSeconds)
+			.input(originalAudioPath)
+			.input(dubbedTrackPath)
+			.outputOptions([
+				"-filter_complex",
+				"[0:a]volume=0.25[orig];[1:a]volume=1.0[dub];[orig][dub]amix=inputs=2:duration=longest:dropout_transition=0[out]",
+				"-map",
+				"[out]",
+				"-c:a",
+				"libmp3lame",
+				"-q:a",
+				"2",
+			])
 			.on("error", (err) => {
-				logger.error(`Error creating silence file: ${err.message}`);
+				logger.error(`Error mixing final tracks: ${err.message}`);
 				reject(err);
 			})
 			.on("end", () => resolve())
 			.save(outputPath);
 	});
+
+	for (const file of tempFilesToClean) {
+		await fs.unlink(file).catch(() => {});
+	}
+
+	logger.info(`Final dubbed audio saved to: ${outputPath}`);
+	return outputPath;
 }

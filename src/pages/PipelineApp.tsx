@@ -82,7 +82,6 @@ export function PipelineApp<PipeLineInput extends z.ZodObject>({
 					new ReplicateUtil(),
 			},
 		};
-		logger.debug("PipelineApp: Starting pipeline with args:", pipelineArgs);
 
 		async function execute() {
 			const runOptions: RunPipelineOptions | undefined = tmpDirectory

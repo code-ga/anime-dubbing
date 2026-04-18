@@ -100,22 +100,22 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 ### Pipeline Steps (Dubbing)
 1. "Setup Environment" - Initialize pipeline environment
 2. "Convert to WAV" - Convert video audio to WAV format using FFmpeg
-3. "Detect and Split by Silence" - Split audio at silence points using FFmpeg silencedetect filter
-4. "Seperate Speech from Audio" - Placeholder step (currently passes through files unchanged); originally intended for speech isolation using SAM-audio-large model via Replicate
-5. "Transcribe Audio" - Convert speech to text using Whisper via Replicate; creates `TranscriptionWithRef[]` with text, timing (start/end), and reference audio segment paths
-6. "Translate Transcript" - Translate transcribed text to target language using Llama 3.1 via OpenRouter/Hack Club AI; returns updated transcriptions with translated text; also stores original text in `originalText` field
-7. "Save Subtitles to SRT" - If subtitleDirectory is provided, saves original.srt (original language) and translated.srt (target language) to the specified directory; skips if not provided
-8. "Generate Dubbed Audio" - Generate TTS audio for each translated segment using `ReplicateUtil.generateVoice()`; chooses Qwen TTS (voice cloning) or MiniMax (preset voices) based on language support; saves individual MP3 files to `tmpDirectory/dubbed_audio/dubbed_0000.mp3` etc.; returns array of `{ path, startTime, originalDuration }` where `originalDuration = end - start` from original transcription
-9. "Merge Segments to Single Audio" - Concatenate all dubbed audio segments with timing alignment using `mergeAudioSegmentsWithTiming()`; for each segment, probes actual dubbed duration; if different from `originalDuration`, applies speed adjustment (atempo filter) to match original length; constructs concat list with silence gaps to preserve original `startTime` spacing between segments; cleans up temp adjusted/silence files; output saved to `tmpDirectory/dubbed_full.mp3`
-10. "Merge Audio with Video" - Replace original audio with dubbed track using `mergeAudioWithVideo()`; copies video stream (`-c:v copy`), maps audio from second input (`-map 1:a:0`), uses `-shortest` to end when shorter stream ends; final output written to `input.outputFile` (typically `.mp4`)
+3. "Detect and Split by Silence" - Split audio at silence points using FFmpeg silencedetect
+4. "Seperate Speech from Audio" - Placeholder (pass-through); originally intended for speech isolation using SAM-audio-large
+5. "Transcribe Audio" - Convert speech to text using Whisper via Replicate; outputs transcriptions with timing (start/end) and reference audio segment paths
+6. "Translate Transcript" - Translate text to target language using LLM (OpenRouter/Hack Club AI); outputs translated transcriptions with original text preserved
+7. "Save Subtitles to SRT" - If `subtitleDirectory` provided, saves original.srt and translated.srt; otherwise skips
+8. "Generate Dubbed Audio" - Generate TTS audio for each translated segment using ReplicateUtil.generateVoice(); chooses Qwen TTS (voice cloning) for supported languages or MiniMax (preset) as fallback; outputs `{ path, startTime, originalDuration }` for each segment
+9. "Merge Segments to Single Audio" - Mix TTS segments with original background audio using `mixTtsWithOriginalAudioBatched()`: background volume reduced to 25%, TTS positioned at original timestamps with 5ms fade in/out, speed-adjusted to match segment durations via atempo, all streams converted to stereo for amix compatibility, combines using amix filter; for large numbers of segments (>31), processes in batches to avoid FFmpeg input limits; cleans up temp files; output: `tmpDirectory/dubbed_full.mp3`
+10. "Merge Audio with Video" - Combine dubbed audio with original video using `mergeAudioWithVideo()`; copies video stream (`-c:v copy`), maps audio from second input (`-map 1:a:0`), uses `-shortest`; final output: `input.outputFile` (e.g., output.mp4)
 - Output: `outputFile` (path to final dubbed video)
 - Checkpoint-aware: Adding steps changes step count; existing checkpoints reset from step 0 (handled by `loadCheckpoint` step name validation)
 
 ### Known Limitations & Future Work (Dubbing)
-1. **Timing alignment (partially solved)**: `mergeAudioSegmentsWithTiming()` now adjusts each TTS segment's speed to match original duration using FFmpeg atempo filter, and inserts silence gaps to preserve original `startTime` positions. Limitations:
-   - Speed factor clamped to [0.5, 2.0]; if TTS is >2x or <0.5x original duration, audio will still drift (would need chained atempo or more aggressive strategies like segment splitting/stitching)
+1. **Timing alignment (partially solved)**: `mixTtsWithOriginalAudio()` adjusts each TTS segment's speed to match original duration using FFmpeg atempo filter, and positions them at original timestamps with background audio ducked to 25% volume. Limitations:
+   - Speed factor clamped to [0.5, 2.0]; if TTS is >2x or <0.5x original duration, audio will still drift (would need chained atempo or more aggressive strategies)
    - Quality degradation from time-stretching may occur especially at extreme speed factors
-   - Gap insertion assumes adjusted segment end equals `startTime + originalDuration`; rounding errors may accumulate slightly
+   - Rounding errors in delay positioning and speed adjustment may cause slight sync drift over long segments
 2. **Speaker diarization**: Current transcription doesn't distinguish multiple speakers; entire video uses single voice clone. Future: enable diarization (Whisper `diarize_audio` + HF token), group segments by speaker, optionally assign different voices.
 3. **Output format options**: Currently hardcoded to MP4 video with replaced audio. Future: allow audio-only output (MP3/WAV), separate audio+video files, or subtitle track generation.
 4. **Voice selection**: TTS automatically chooses Qwen (voice cloning) or MiniMax (preset) based on language. Future: CLI flag to force specific TTS provider, voice presets, or custom voice cloning parameters.
@@ -172,6 +172,8 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
   - `createSilenceFile(outputPath, durationSeconds)` - Generate silent audio (stereo, 44.1kHz) of specified duration using anullsrc lavfi source
   - `mergeAudioSegmentsWithTiming(audioFiles, outputPath, tmpDir)` - Advanced merge with timing alignment: speeds up/slows down each segment to match original duration (using `originalDuration` property), inserts silence gaps between segments based on original `startTime` offsets; cleans up temp adjusted/silence files after merge
   - `mergeAudioWithVideo(videoPath, audioPath, outputPath)` - Merge dubbed audio with original video; copies video stream (`-c:v copy`), maps audio from second input (`-map 1:a:0`), uses `-shortest` to end at shorter of video/audio durations
+  - `mixTtsWithOriginalAudio(ttsSegments, originalAudioPath, outputPath, tmpDir)` - Mix TTS segments with original background audio: reduces background volume to 25% (ducking), applies 5ms fade in/out to TTS to prevent clicks, positions TTS at correct timestamps using adelay, converts all to stereo to ensure amix compatibility, adjusts TTS speed to match original segment duration, combines everything using FFmpeg amix filter; cleans up temp adjusted files after mixing
+  - `mixTtsWithOriginalAudioBatched(ttsSegments, originalAudioPath, outputPath, tmpDir)` - Batched version of mixTtsWithOriginalAudio for handling large numbers of segments; processes in batches of 31 (to stay under amix filter limit of 64), mixes each batch with original audio, then concatenates batch results; handles 67+ segments without hitting FFmpeg input limits
 - Interfaces:
   - `AudioSegmentInput`: `{ path: string; startTime: number }`
   - Extended segment for timing: `{ path: string; startTime: number; originalDuration?: number }`
@@ -213,9 +215,10 @@ Each step handler receives an object with:
 ```
 **Indexing note:** Steps access prior outputs via 0-based indices. For the dubbing pipeline:
 - Step 6 (Translate) reads `previousOutputs[4]` (Transcribe Audio output)
-- Step 7 (Generate Dubbed Audio) reads `previousOutputs[5]` (Translate Transcript output)
-- Step 8 (Merge Segments) reads `previousOutputs[6]` (Generate Dubbed Audio output)
-- Step 9 (Merge with Video) reads `previousOutputs[7]` (Merge Segments output)
+- Step 7 (Save Subtitles) reads `previousOutputs[5]` (Translate Transcript output)
+- Step 8 (Generate Dubbed Audio) reads `previousOutputs[5]` (Translate Transcript output)
+- Step 9 (Merge Segments) reads `previousOutputs[7]` (Generate Dubbed Audio output) and `previousOutputs[1]` (original audio from Step 2)
+- Step 10 (Merge with Video) reads `previousOutputs[8]` (Merge Segments output)
 
 ### Example: Step can access previous step output
 ```typescript
@@ -251,9 +254,11 @@ bun run src/index.tsx dubbing --inputFile video.mp4 --outputFile audio.wav
 4. "Seperate Speech from Audio" - Placeholder (pass-through); originally intended for speech isolation
 5. "Transcribe Audio" - Convert speech to text using Whisper; outputs transcriptions with timing and reference audio
 6. "Translate Transcript" - Translate text to target language using LLM; outputs translated transcriptions
-7. "Generate Dubbed Audio" - Generate TTS for each segment using ReplicateUtil.generateVoice(); outputs array of audio file paths with startTime
-8. "Merge Segments to Single Audio" - Concatenate dubbed segments into single audio file using mergeAudioSegments()
-9. "Merge Audio with Video" - Combine dubbed audio with original video using mergeAudioWithVideo(); outputs final video file
+7. "Save Subtitles to SRT" - If subtitleDirectory is provided, saves original.srt and translated.srt; otherwise skips
+8. "Generate Dubbed Audio" - Generate TTS for each segment using ReplicateUtil.generateVoice(); outputs array of `{ path, startTime, originalDuration }`
+9. "Merge Segments to Single Audio" - Mix TTS segments with original background audio: background volume reduced to 25%, TTS positioned at original timestamps with 5ms fade in/out, speed-adjusted to match segment durations, amix filter combines everything; output saved to `tmpDirectory/dubbed_full.mp3`
+10. "Merge Audio with Video" - Combine dubbed audio with original video using `mergeAudioWithVideo()`; copies video stream, maps audio from second input, uses `-shortest`; final output written to `input.outputFile`
+- Output: `outputFile` (path to final dubbed video)
 
 ## Feature: Log Viewer
 
@@ -353,4 +358,8 @@ User runs: bun run src/index.tsx dubbing --inputFile video.mp4 --tmpDirectory ./
 - Added step name validation in checkpoint - changing step name adjusts checkpoint to re-run from that step while preserving earlier outputs (2026-04-16)
 - Added step versioning for checkpoint - developers can add `version` property to step to mark changes; version mismatch triggers resume from that step (2026-04-17)
 - Added SRT subtitle export feature - use `--subtitleDirectory` or `-S` flag to save original.srt and translated.srt to specified directory (2026-04-17)
+- Fixed FFmpeg amix filter input limit error (code 234) - added `mixTtsWithOriginalAudioBatched` function that processes segments in batches of 31 to avoid exceeding amix filter's maximum inputs; original audio is mixed with each batch, then batch results are concatenated (2026-04-18)
+- Fixed background audio preservation: replaced `mergeAudioSegmentsWithTiming` with `mixTtsWithOriginalAudio` in Step 9; now mixes TTS over original background at 25% volume, with 5ms fade in/out to prevent clicks (2026-04-18)
 - Added checkpoint recovery from step errors - when a step fails, checkpoint is saved with error status, allowing re-run to resume from the failed step (2026-04-17)
+- Replaced buggy batched TTS merging logic with \processAndMergeDubbedAudio\ (2026-04-18): now computes target durations properly to change speed, generates a continuous timeline using the ffmpeg concat demuxer to avoid CLI length limits, ensures alignment with original timestamps by padding silence, adding 5ms fade in/fade out to each voice segment, and uses amix to merge original audio (at 25% volume) with the composed dubbed track (100% volume).
+- Cleaned up legacy dead code (removed commented out isolation step, deleted unused ffmpeg helper functions) in dubbing.ts and ffmpeg.ts (2026-04-18).
