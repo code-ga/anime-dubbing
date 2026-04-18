@@ -15,23 +15,28 @@ import {
 	splitAudioByTimeWithRef,
 	type TranscriptionWithRef,
 } from "../utils/audioSplit";
+import {
+	isQwenTTSSupported,
+} from "../utils/language";
 import { logger } from "../utils/logger";
 
-	const dubbingPipeline = definePipeline({
-		name: "Dubbing Pipeline",
-		description:
-			"A pipeline to extract audio from video, separate speech, and prepare for dubbing.",
-		allowTypes: ["mp4", "mkv", "avi"],
-		inputType: z.object({
-			inputFile: z.string().describe("Input video file"),
-			outputFile: z.string().describe("Output audio file"),
-			targetLanguage: z.string(),
-			tmpDirectory: z.string(),
-			sourceLanguage: z.string(),
-			subtitleDirectory: z.string().optional(),
-			backgroundVolume: z.number().min(0).max(1).default(0.25),
-			dubbedVolume: z.number().min(0).max(1).default(1.0),
-		}),
+const dubbingPipeline = definePipeline({
+	name: "Dubbing Pipeline",
+	description:
+		"A pipeline to extract audio from video, separate speech, and prepare for dubbing.",
+	allowTypes: ["mp4", "mkv", "avi"],
+	inputType: z.object({
+		inputFile: z.string().describe("Input video file"),
+		outputFile: z.string().describe("Output audio file"),
+		targetLanguage: z.string(),
+		tmpDirectory: z.string(),
+		sourceLanguage: z.string(),
+		subtitleDirectory: z.string().optional(),
+		backgroundVolume: z.number().min(0).max(1).default(0.25),
+		dubbedVolume: z.number().min(0).max(1).default(1.0),
+		ttsMode: z.enum(["auto", "qwen", "minimax"]).default("auto"),
+		voiceClone: z.boolean().default(true),
+	}),
 	outputType: z.object({
 		outputFile: z.string().describe("Output file for the dubbed video"),
 	}),
@@ -75,26 +80,12 @@ import { logger } from "../utils/logger";
 				"Detect silent parts in the audio and split the audio into segments based on silence.",
 			handler: async ({ input, context }) => {
 				context.signal?.throwIfAborted();
-				// logger.debug(
-				// 	`Detect and Split by Silence step: input.outputFile = ${inspect(context.previousOutputs[1])} context.args.tmpDirectory = ${context.args.tmpDirectory}`,
-				// );
-				// const currentStepTmpDir = path.join(
-				// 	context.args.tmpDirectory as string,
-				// 	`step_${Object.keys(context.previousOutputs).length}`,
-				// );
-				// await mkdir(currentStepTmpDir, { recursive: true });
-				// const outputFiles = await splitAudioBySilence({
-				// 	inputPath: (context.previousOutputs[1] as { outputFile: string })
-				// 		?.outputFile as string,
-				// 	outputDir: currentStepTmpDir,
-				// 	silenceThreshold: -40,
-				// 	minSilenceDuration: 0.5,
-				// 	minSegmentDuration: 0.3,
-				// });
-				// logger.debug(
-				// 	`Detect and Split by Silence step: outputFiles = ${outputFiles}`,
-				// );
-				return { outputFile: [(context.previousOutputs[1] as { outputFile: string })?.outputFile as string] };
+				return {
+					outputFile: [
+						(context.previousOutputs[1] as { outputFile: string })
+							?.outputFile as string,
+					],
+				};
 			},
 		},
 		{
@@ -327,26 +318,12 @@ import { logger } from "../utils/logger";
 				}
 
 				const targetLanguage = context.args.targetLanguage as string;
-				const qwenTtsSupportedLanguages = [
-					"en",
-					"zh",
-					"ja",
-					"ko",
-					"es",
-					"fr",
-					"de",
-					"ar",
-					"pt",
-					"it",
-					"ru",
-					"hi",
-				];
 				const requiresRefAudio =
-					!qwenTtsSupportedLanguages.includes(targetLanguage);
+					input.voiceClone && !isQwenTTSSupported(targetLanguage as any);
 
 				if (requiresRefAudio && !firstValidRefAudio) {
 					throw new Error(
-						`Language "${targetLanguage}" requires reference audio for voice cloning. Please provide reference audio or use a supported language.`,
+						`Language "${targetLanguage}" requires reference audio for voice cloning. Please provide reference audio or use a supported language (or disable cloning).`,
 					);
 				}
 
@@ -376,6 +353,8 @@ import { logger } from "../utils/logger";
 						ref_audioUrl: refAudioUrl ?? undefined,
 						textInOrginalLanguage: t.text,
 						language: targetLanguage,
+						ttsProvider: input.ttsMode,
+						voiceClone: input.voiceClone,
 					});
 
 					const outputPath = path.join(
@@ -471,5 +450,6 @@ import { logger } from "../utils/logger";
 		},
 	],
 });
+
 
 export default dubbingPipeline;

@@ -2,6 +2,11 @@ import { readFile } from "node:fs/promises";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText } from "ai";
 import Replicate from "replicate";
+import { type LanguageCode } from "../types/language";
+import {
+	getLanguageNameForTranslation,
+	getTTSProvider,
+} from "../utils/language";
 import { logger } from "../utils/logger";
 import { detectVoiceMetadataForMinimax } from "../utils/voice";
 
@@ -25,70 +30,6 @@ interface ReplicateWhisperOutput {
 	chunks: { text: string; timestamp: [number, number] }[];
 	text: string;
 }
-
-const qwenTtsSupportedLanguages = [
-	"en",
-	"ja",
-	"ko",
-	"zh",
-	"es",
-	"fr",
-	"de",
-	"it",
-	"pt",
-	"ru",
-	"ar",
-	"hi",
-];
-const miniMaxLanguages = {
-	// Asian Languages
-	zh: "Chinese (Mandarin / Cantonese)",
-	ja: "Japanese",
-	ko: "Korean",
-	vi: "Vietnamese",
-	id: "Indonesian",
-	th: "Thai",
-	ms: "Malay",
-	tl: "Filipino",
-	ta: "Tamil",
-	hi: "Hindi",
-
-	// English
-	en: "English",
-
-	// European Languages
-	es: "Spanish",
-	fr: "French",
-	de: "German",
-	pt: "Portuguese (Brazilian)",
-	ru: "Russian",
-	it: "Italian",
-	tr: "Turkish",
-	nl: "Dutch",
-	uk: "Ukrainian",
-	pl: "Polish",
-	ro: "Romanian",
-	el: "Greek",
-	cs: "Czech",
-	fi: "Finnish",
-	bg: "Bulgarian",
-	da: "Danish",
-	sk: "Slovak",
-	sv: "Swedish",
-	hr: "Croatian",
-	hu: "Hungarian",
-	no: "Norwegian",
-	sl: "Slovenian",
-	ca: "Catalan",
-	lt: "Lithuanian",
-	nn: "Nynorsk",
-
-	// Middle Eastern & Other
-	ar: "Arabic",
-	he: "Hebrew",
-	fa: "Persian",
-	af: "Afrikaans",
-};
 
 export class ReplicateUtil {
 	constructor(
@@ -165,30 +106,14 @@ export class ReplicateUtil {
 
 		const textToTranslate = transcriptions.map((t) => t.text).join("\n");
 
-		const languageNames: Record<string, string> = {
-			en: "English",
-			ja: "Japanese",
-			ko: "Korean",
-			zh: "Chinese",
-			es: "Spanish",
-			fr: "French",
-			de: "German",
-			it: "Italian",
-			pt: "Portuguese",
-			ru: "Russian",
-			ar: "Arabic",
-			hi: "Hindi",
-			th: "Thai",
-			vi: "Vietnamese",
-			id: "Indonesian",
-			ms: "Malay",
-		};
+		const targetLangCode = targetLanguage as LanguageCode;
+		const sourceLangCode = sourceLanguage as LanguageCode;
 
-		const targetLang = languageNames[targetLanguage] || targetLanguage;
+		const targetLang = getLanguageNameForTranslation(targetLangCode);
 		const sourceLang =
 			sourceLanguage === "auto"
 				? "the original language"
-				: languageNames[sourceLanguage] || sourceLanguage;
+				: getLanguageNameForTranslation(sourceLangCode);
 
 		const systemPrompt = `You are a professional translator specializing in anime and media content. Translate the following text from ${sourceLang} to ${targetLang}. Preserve the meaning, tone, and context as naturally as possible. Only output the translated text, no explanations.`;
 
@@ -219,19 +144,25 @@ export class ReplicateUtil {
 		ref_audioUrl,
 		textInOrginalLanguage,
 		language,
+		ttsProvider = "auto",
+		voiceClone = true,
 	}: {
 		text: string; // The text to be converted to speech
 		ref_audioUrl?: string; // For voice cloning, provide reference audio. If not provided, uses TTS without cloning.
 		textInOrginalLanguage?: string; // For better voice cloning results, provide the text in the original language of the reference audio. pre-translation if necessary.
 		language: string;
+		ttsProvider?: "auto" | "qwen" | "minimax";
+		voiceClone?: boolean;
 	}): Promise<Buffer> {
-		const hasRefAudio = ref_audioUrl && ref_audioUrl.trim() !== "";
+		const langCode = language as LanguageCode;
+		const provider = getTTSProvider(langCode, ttsProvider);
+		const hasRefAudio = voiceClone && ref_audioUrl && ref_audioUrl.trim() !== "";
 
-		logger.debug(
-			`Generating voice for text: "${text}" with reference audio: ${ref_audioUrl ?? "none"} in language: ${language}`,
-			{ text, ref_audioUrl, language },
+		logger.info(
+			`Generating voice: provider=${provider}, cloning=${hasRefAudio}, language=${language}`,
 		);
-		if (qwenTtsSupportedLanguages.includes(language)) {
+
+		if (provider === "qwen") {
 			const input = hasRefAudio
 				? {
 						mode: "voice_cloning",
@@ -250,13 +181,13 @@ export class ReplicateUtil {
 			const output = (await this.replicate.run("qwen/qwen3-tts", {
 				input,
 			})) as any;
-			logger.debug("Qwen TTS output: ", output);
-
 			return output;
 		} else {
+			// MiniMax
 			const { pitch, speed, volume } = hasRefAudio
 				? detectVoiceMetadataForMinimax(await readFile(ref_audioUrl!))
 				: { pitch: 0, speed: 1, volume: 1 };
+
 			const input = {
 				text: text,
 				pitch: pitch,
@@ -275,8 +206,8 @@ export class ReplicateUtil {
 				input,
 			})) as any;
 
-			logger.debug("Minimax TTS output: ", output);
 			return output;
 		}
 	}
 }
+

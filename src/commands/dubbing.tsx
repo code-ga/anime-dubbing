@@ -5,6 +5,7 @@ import z from "zod";
 import { ReplicateUtil } from "../class/replicate";
 import { PipelineApp } from "../pages/PipelineApp";
 import { dubbingPipeline } from "../pipelines";
+import { SUPPORTED_LANGUAGES } from "../types/language";
 import { loadCheckpoint } from "../utils/checkpoint";
 import { renderToCli } from "../utils/cliRenderer";
 import { logger } from "../utils/logger";
@@ -25,7 +26,11 @@ export const dubbing = defineCommand({
 			targetLanguage: z
 				.string()
 				.describe("Target language for dubbing")
-				.default("en"),
+				.default("en")
+				.refine(
+					(val) => (SUPPORTED_LANGUAGES as string[]).includes(val),
+					`Invalid target language. Supported: ${SUPPORTED_LANGUAGES.join(", ")}`,
+				),
 			sourceLanguage: z
 				.string()
 				.describe("Source language of the audio")
@@ -46,6 +51,14 @@ export const dubbing = defineCommand({
 				.min(0)
 				.max(1)
 				.default(1.0),
+			ttsMode: z
+				.enum(["auto", "qwen", "minimax"])
+				.describe("TTS model to use (auto, qwen, minimax)")
+				.default("auto"),
+			voiceClone: z
+				.boolean()
+				.describe("Whether to use voice cloning (requires ref audio)")
+				.default(true),
 		}),
 		{
 			i: "inputFile",
@@ -56,6 +69,8 @@ export const dubbing = defineCommand({
 			S: "subtitleDirectory",
 			b: "backgroundVolume",
 			v: "dubbedVolume",
+			m: "ttsMode",
+			c: "voiceClone",
 		},
 	),
 	action: async (options) => {
@@ -87,6 +102,8 @@ export const dubbing = defineCommand({
 					subtitleDirectory: options.subtitleDirectory,
 					backgroundVolume: options.backgroundVolume,
 					dubbedVolume: options.dubbedVolume,
+					ttsMode: options.ttsMode,
+					voiceClone: options.voiceClone,
 				}}
 				outputFile={options.outputFile}
 				checkpoint={checkpoint}
@@ -100,3 +117,4 @@ export const dubbing = defineCommand({
 		);
 	},
 });
+

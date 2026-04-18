@@ -97,6 +97,9 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 - Input: inputFile, outputFile
 - Output: outputFile
 
+### src/pipelines/index.ts
+- Exports all pipeline definitions
+
 ### Pipeline Steps (Dubbing)
 1. "Setup Environment" - Initialize pipeline environment
 2. "Convert to WAV" - Convert video audio to WAV format using FFmpeg
@@ -105,7 +108,7 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 5. "Transcribe Audio" - Convert speech to text using Whisper via Replicate; outputs transcriptions with timing (start/end) and reference audio segment paths
 6. "Translate Transcript" - Translate text to target language using LLM (OpenRouter/Hack Club AI); outputs translated transcriptions with original text preserved
 7. "Save Subtitles to SRT" - If `subtitleDirectory` provided, saves original.srt and translated.srt; otherwise skips
-8. "Generate Dubbed Audio" - Generate TTS audio for each translated segment using ReplicateUtil.generateVoice(); chooses Qwen TTS (voice cloning) for supported languages or MiniMax (preset) as fallback; outputs `{ path, startTime, originalDuration }` for each segment
+8. "Generate Dubbed Audio" - Generate TTS audio for each translated segment using ReplicateUtil.generateVoice(); supports user-selected TTS provider (`auto`, `qwen`, or `minimax`) and `voiceClone` toggle; outputs `{ path, startTime, originalDuration }` for each segment
 9. "Merge Segments to Single Audio" - Mix TTS segments with original background audio using `mixTtsWithOriginalAudioBatched()`: background volume reduced to 25%, TTS positioned at original timestamps with 5ms fade in/out, speed-adjusted to match segment durations via atempo, all streams converted to stereo for amix compatibility, combines using amix filter; for large numbers of segments (>31), processes in batches to avoid FFmpeg input limits; cleans up temp files; output: `tmpDirectory/dubbed_full.mp3`
 10. "Merge Audio with Video" - Combine dubbed audio with original video using `mergeAudioWithVideo()`; copies video stream (`-c:v copy`), maps audio from second input (`-map 1:a:0`), uses `-shortest`; final output: `input.outputFile` (e.g., output.mp4)
 - Output: `outputFile` (path to final dubbed video)
@@ -122,8 +125,17 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 5. **Speech separation placeholder**: Step 4 "Seperate Speech from Audio" is currently a passthrough; if enabled later, will need index adjustment in subsequent steps (currently step 5 accesses `previousOutputs[3]`, which would become the separated output).
 6. **Audio-video sync edge cases**: `mergeAudioWithVideo()` uses `-shortest`; if dubbed audio still shorter than video (due to clamped speed adjustment), video cuts early; if longer (unlikely after timing alignment), audio gets truncated. Future: add offset parameter, or analyze/adjust final audio duration before merge.
 
-### src/pipelines/index.ts
-- Exports all pipeline definitions
+### src/types/language.ts
+- Single source of truth for language metadata
+- Defines `LanguageCode` enum and `LanguageInfo` interface
+- `LANGUAGE_MAP` contains comprehensive data including native names, translation names, and TTS model support
+- Derives `SUPPORTED_LANGUAGES`, `QWEN_TTS_SUPPORTED_LANGUAGES`, and `MINIMAX_TTS_SUPPORTED_LANGUAGES` from the map
+
+### src/utils/language.ts
+- Centralized language utilities using metadata from `src/types/language.ts`
+- `normalizeLanguageName(input)`: Normalizes language codes/names to standard translation names
+- `getTTSProvider(language, preference?)`: Determines the appropriate TTS model (qwen/minimax) based on support and user preference
+- `getLanguageNameForTranslation(language)`: Returns the name to use in LLM prompts
 
 ### src/types/checkpoint.ts
 - Type definitions for checkpoint functionality
@@ -139,15 +151,6 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
   - Also validates step names for completed steps (for backward compatibility)
   - Returns adjusted checkpoint instead of clearing when step changed
 - clearCheckpoint(tmpDir): removes checkpoint file after successful completion
-
-### src/commands/dubbing.tsx
-- Dubbing command entry point
-- Defines CLI options: inputFile (required), tmpDirectory (default: ./tmp), outputFile (default: output.mp4), targetLanguage (default: en), sourceLanguage (default: None), subtitleDirectory (optional, -S flag)
-- Creates ReplicateUtil instance and passes via args prop to PipelineApp
-- Loads checkpoint from tmpDirectory and passes to PipelineApp for resume support
-- Renders PipelineApp with renderToCli for TUI display
-- Output is final dubbed video file (MP4 format)
-- If subtitleDirectory is provided, saves original.srt and translated.srt to that directory
 
 ### src/utils/audioSplit.ts
 - Utility for splitting audio files by silence detection
@@ -172,23 +175,39 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
   - `createSilenceFile(outputPath, durationSeconds)` - Generate silent audio (stereo, 44.1kHz) of specified duration using anullsrc lavfi source
   - `mergeAudioSegmentsWithTiming(audioFiles, outputPath, tmpDir)` - Advanced merge with timing alignment: speeds up/slows down each segment to match original duration (using `originalDuration` property), inserts silence gaps between segments based on original `startTime` offsets; cleans up temp adjusted/silence files after merge
   - `mergeAudioWithVideo(videoPath, audioPath, outputPath)` - Merge dubbed audio with original video; copies video stream (`-c:v copy`), maps audio from second input (`-map 1:a:0`), uses `-shortest` to end at shorter of video/audio durations
-  - `mixTtsWithOriginalAudio(ttsSegments, originalAudioPath, outputPath, tmpDir)` - Mix TTS segments with original background audio: reduces background volume to 25% (ducking), applies 5ms fade in/out to TTS to prevent clicks, positions TTS at correct timestamps using adelay, converts all to stereo to ensure amix compatibility, adjusts TTS speed to match original segment duration, combines everything using FFmpeg amix filter; cleans up temp adjusted files after mixing
   - `mixTtsWithOriginalAudioBatched(ttsSegments, originalAudioPath, outputPath, tmpDir)` - Batched version of mixTtsWithOriginalAudio for handling large numbers of segments; processes in batches of 31 (to stay under amix filter limit of 64), mixes each batch with original audio, then concatenates batch results; handles 67+ segments without hitting FFmpeg input limits
+  - `processAndMergeDubbedAudio(ttsSegments, originalAudioPath, outputPath, tmpDir, bgVolume, ttsVolume)` - Precise audio merging using ffmpeg concat demuxer. Handles speed adjustment, 5ms crossfades, and gap padding with silence.
 - Interfaces:
   - `AudioSegmentInput`: `{ path: string; startTime: number }`
   - Extended segment for timing: `{ path: string; startTime: number; originalDuration?: number }`
 
 ### src/class/replicate.ts
 - ReplicateUtil class for AI-powered audio and text processing
-- Uses Replicate API for Whisper transcription, speech isolation, and TTS generation
-- Uses Hack Club AI (OpenRouter) for translation via ai SDK
+- Uses centralized language utilities for translation and TTS
 - Methods:
-  - `isolationSpeechFromAudio(audioUrl)` - Separate speech from background using SAM-audio-large (currently unused, placeholder in pipeline)
-  - `transcribeAudio(audioUrl, sourceLanguage)` - Transcribe audio using Incredibly Fast Whisper model; returns TranscriptionOutput[] with text, start, end, duration, and optional words with speaker
-  - `translateTranscript(transcriptions, targetLanguage, sourceLanguage)` - Translate transcriptions using Llama 3.1 via OpenRouter; preserves original if translation missing; returns array with translated text
-  - `generateVoice({ text, ref_audioUrl, textInOrginalLanguage, language })` - Generate TTS audio using voice cloning; chooses between Qwen TTS (for supported languages: en, ja, ko, zh, es, fr, de, it, pt, ru, ar, hi) or MiniMax speech-02-turbo (fallback for other languages); returns Buffer (already base64-decoded) ready to write to disk
-- Supports both HTTP URLs and local file paths for audio input (converts local files to base64 data URLs)
-- Transcription output includes word-level timestamps and speaker diarization data (when enabled)
+  - `isolationSpeechFromAudio(audioUrl)` - Separate speech from background using SAM-audio-large (placeholder)
+  - `transcribeAudio(audioUrl, sourceLanguage)` - Transcribe audio using Incredibly Fast Whisper; returns TranscriptionOutput[]
+  - `translateTranscript(transcriptions, targetLanguage, sourceLanguage)` - Translate transcriptions using AI; preserves original if translation missing
+  - `generateVoice({ text, ref_audioUrl, textInOrginalLanguage, language, ttsProvider, voiceClone })` - Generate TTS audio; supports explicit `ttsProvider` selection (`auto`, `qwen`, `minimax`) and `voiceClone` toggle
+- Supports both HTTP URLs and local file paths for audio input
+
+### src/commands/dubbing.tsx
+- Dubbing command entry point
+- Defines CLI options: 
+  - `inputFile` (required, `-i`)
+  - `tmpDirectory` (default: `./tmp`, `-t`)
+  - `outputFile` (default: `output.mp4`, `-o`)
+  - `targetLanguage` (default: `en`, `-l`, validated against `SUPPORTED_LANGUAGES`)
+  - `sourceLanguage` (default: `None`, `-s`)
+  - `subtitleDirectory` (optional, `-S`)
+  - `backgroundVolume` (default: 0.25, `-b`)
+  - `dubbedVolume` (default: 1.0, `-v`)
+  - `ttsMode` (default: `auto`, `-m`, choices: `auto`, `qwen`, `minimax`)
+  - `voiceClone` (default: `true`, `-c`, boolean)
+- Creates ReplicateUtil instance and passes via args prop to PipelineApp
+- Loads checkpoint from tmpDirectory and passes to PipelineApp for resume support
+- Renders PipelineApp with renderToCli for TUI display
+- Output is final dubbed video file (MP4 format)
 
 ## Feature: Pipeline System with Steps, Cancellation, and Data Passing
 
@@ -205,7 +224,15 @@ The dubbing command displays a real-time progress UI:
 Each step handler receives an object with:
 ```typescript
 {
-  input: { inputFile: string, outputFile: string, targetLanguage: string, tmpDirectory: string, sourceLanguage: string }, // parsed input from schema
+  input: { 
+    inputFile: string, 
+    outputFile: string, 
+    targetLanguage: string, 
+    tmpDirectory: string, 
+    sourceLanguage: string,
+    ttsMode: "auto" | "qwen" | "minimax",
+    voiceClone: boolean
+  }, // parsed input from schema
   context: {
     signal: AbortSignal, // for cancellation
     previousOutputs: Record<number, unknown>, // outputs from previous steps (index 0 = step 1, index N = step N+1)
@@ -255,7 +282,7 @@ bun run src/index.tsx dubbing --inputFile video.mp4 --outputFile audio.wav
 5. "Transcribe Audio" - Convert speech to text using Whisper; outputs transcriptions with timing and reference audio
 6. "Translate Transcript" - Translate text to target language using LLM; outputs translated transcriptions
 7. "Save Subtitles to SRT" - If subtitleDirectory is provided, saves original.srt and translated.srt; otherwise skips
-8. "Generate Dubbed Audio" - Generate TTS for each segment using ReplicateUtil.generateVoice(); outputs array of `{ path, startTime, originalDuration }`
+8. "Generate Dubbed Audio" - Generate TTS audio for each segment using ReplicateUtil.generateVoice(); supports user-selected TTS provider (`auto`, `qwen`, or `minimax`) and `voiceClone` toggle; outputs array of `{ path, startTime, originalDuration }`
 9. "Merge Segments to Single Audio" - Mix TTS segments with original background audio: background volume reduced to 25%, TTS positioned at original timestamps with 5ms fade in/out, speed-adjusted to match segment durations, amix filter combines everything; output saved to `tmpDirectory/dubbed_full.mp3`
 10. "Merge Audio with Video" - Combine dubbed audio with original video using `mergeAudioWithVideo()`; copies video stream, maps audio from second input, uses `-shortest`; final output written to `input.outputFile`
 - Output: `outputFile` (path to final dubbed video)
