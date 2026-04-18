@@ -95,6 +95,8 @@ export async function processAndMergeDubbedAudio(
 	originalAudioPath: string,
 	outputPath: string,
 	tmpDir: string,
+	backgroundVolume: number = 0.25,
+	dubbedVolume: number = 1.0,
 ): Promise<string> {
 	logger.debug(
 		`processAndMergeDubbedAudio: mixing ${ttsSegments.length} TTS segments with original audio`,
@@ -283,7 +285,7 @@ export async function processAndMergeDubbedAudio(
 			.input(dubbedTrackPath)
 			.outputOptions([
 				"-filter_complex",
-				"[0:a]volume=0.25[orig];[1:a]volume=1.0[dub];[orig][dub]amix=inputs=2:duration=longest:dropout_transition=0[out]",
+				`[0:a]volume=${backgroundVolume}[orig];[1:a]volume=${dubbedVolume}[dub];[orig][dub]amix=inputs=2:duration=longest:dropout_transition=0[out]`,
 				"-map",
 				"[out]",
 				"-c:a",

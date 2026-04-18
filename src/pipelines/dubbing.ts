@@ -17,19 +17,21 @@ import {
 } from "../utils/audioSplit";
 import { logger } from "../utils/logger";
 
-const dubbingPipeline = definePipeline({
-	name: "Dubbing Pipeline",
-	description:
-		"A pipeline to extract audio from video, separate speech, and prepare for dubbing.",
-	allowTypes: ["mp4", "mkv", "avi"],
-	inputType: z.object({
-		inputFile: z.string().describe("Input video file"),
-		outputFile: z.string().describe("Output audio file"),
-		targetLanguage: z.string(),
-		tmpDirectory: z.string(),
-		sourceLanguage: z.string(),
-		subtitleDirectory: z.string().optional(),
-	}),
+	const dubbingPipeline = definePipeline({
+		name: "Dubbing Pipeline",
+		description:
+			"A pipeline to extract audio from video, separate speech, and prepare for dubbing.",
+		allowTypes: ["mp4", "mkv", "avi"],
+		inputType: z.object({
+			inputFile: z.string().describe("Input video file"),
+			outputFile: z.string().describe("Output audio file"),
+			targetLanguage: z.string(),
+			tmpDirectory: z.string(),
+			sourceLanguage: z.string(),
+			subtitleDirectory: z.string().optional(),
+			backgroundVolume: z.number().min(0).max(1).default(0.25),
+			dubbedVolume: z.number().min(0).max(1).default(1.0),
+		}),
 	outputType: z.object({
 		outputFile: z.string().describe("Output file for the dubbed video"),
 	}),
@@ -435,6 +437,8 @@ const dubbingPipeline = definePipeline({
 					originalAudioPath,
 					outputPath,
 					tmpDir,
+					context.args.backgroundVolume as number,
+					context.args.dubbedVolume as number,
 				);
 
 				logger.debug(`Mixed audio to: ${mergedPath}`);

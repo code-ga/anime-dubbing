@@ -34,6 +34,18 @@ export const dubbing = defineCommand({
 				.string()
 				.describe("Directory to save SRT subtitle files")
 				.optional(),
+			backgroundVolume: z
+				.number()
+				.describe("Volume for original background audio (0.0-1.0)")
+				.min(0)
+				.max(1)
+				.default(0.25),
+			dubbedVolume: z
+				.number()
+				.describe("Volume for dubbed audio (0.0-1.0)")
+				.min(0)
+				.max(1)
+				.default(1.0),
 		}),
 		{
 			i: "inputFile",
@@ -42,6 +54,8 @@ export const dubbing = defineCommand({
 			l: "targetLanguage",
 			s: "sourceLanguage",
 			S: "subtitleDirectory",
+			b: "backgroundVolume",
+			v: "dubbedVolume",
 		},
 	),
 	action: async (options) => {
@@ -71,12 +85,16 @@ export const dubbing = defineCommand({
 					tmpDirectory: absoluteTmpDir,
 					sourceLanguage: options.sourceLanguage,
 					subtitleDirectory: options.subtitleDirectory,
+					backgroundVolume: options.backgroundVolume,
+					dubbedVolume: options.dubbedVolume,
 				}}
 				outputFile={options.outputFile}
 				checkpoint={checkpoint}
 				tmpDirectory={absoluteTmpDir}
 				args={{
 					replicateUtil,
+					backgroundVolume: options.backgroundVolume,
+					dubbedVolume: options.dubbedVolume,
 				}}
 			/>,
 		);
