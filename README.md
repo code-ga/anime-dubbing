@@ -106,7 +106,20 @@ bun run typecheck
 
 # Lint
 bun run lint
+
+# Build to executable
+bun build src/index.tsx --outfile anime-dubbing.exe --compile
 ```
+
+## Build
+
+### Build to Executable
+
+```bash
+bun build src/index.tsx --outfile anime-dubbing.exe --compile
+```
+
+See [BUILD.md](BUILD.md) for detailed build instructions and cross-compilation.
 
 ## License
 
