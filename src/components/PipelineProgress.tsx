@@ -1,6 +1,7 @@
 import { TextAttributes } from "@opentui/core";
 import type { Pipeline, StepStatus } from "../types/pipeline";
 
+// biome-disable-next-line lint/suspicious/noExplicitAny
 interface PipelineProgressProps {
 	pipeline: Pipeline<any, any>;
 	currentStep: number;

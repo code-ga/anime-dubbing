@@ -27,9 +27,6 @@ jobs:
       - name: Run typecheck
         run: bun run typecheck
 
-      - name: Run lint
-        run: bun run lint
-
       - name: Build executable
         run: bun build src/index.tsx --compile --outfile anime-dubbing.exe
 

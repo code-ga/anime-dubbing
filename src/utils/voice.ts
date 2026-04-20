@@ -1,4 +1,4 @@
-export function detectVoiceMetadataForMinimax(audioBuffer: Buffer): {
+export function detectVoiceMetadataForMinimax(_audioBuffer: Buffer): {
 	pitch: number;
 	speed: number;
   volume: number;

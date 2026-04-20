@@ -18,7 +18,8 @@ const config = defineConfig({
 try {
 	const result = processConfig(config, process.argv.slice(2));
 	await result.command.action(result.options, result.args);
-} catch (error: any) {
-	console.error("Error:", error.message);
+} catch (error) {
+	const message = error instanceof Error ? error.message : String(error);
+	console.error("Error:", message);
 	process.exit(1);
 }

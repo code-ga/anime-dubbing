@@ -2,11 +2,10 @@ import { readFile } from "node:fs/promises";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText } from "ai";
 import Replicate from "replicate";
-import { type LanguageCode } from "../types/language";
+import type { LanguageCode } from "../types/language";
 import {
 	getLanguageNameForTranslation,
 	getTTSProvider,
-	normalizeLanguageName,
 } from "../utils/language";
 import { logger } from "../utils/logger";
 import { detectVoiceMetadataForMinimax } from "../utils/voice";
@@ -201,14 +200,14 @@ IMPORTANCE:
 		);
 
 		if (provider === "qwen") {
-			const input = hasRefAudio
+			const input = hasRefAudio && ref_audioUrl
 				? {
 						mode: "voice_cloning",
 						text,
 						language: "auto",
-						reference_audio: ref_audioUrl!.startsWith("http")
+						reference_audio: ref_audioUrl.startsWith("http")
 							? ref_audioUrl
-							: `data:audio/wav;base64,${(await readFile(ref_audioUrl!)).toString("base64")}`,
+							: `data:audio/wav;base64,${(await readFile(ref_audioUrl)).toString("base64")}`,
 						reference_text: textInOrginalLanguage,
 					}
 				: {
@@ -222,8 +221,8 @@ IMPORTANCE:
 			return output;
 		} else {
 			// MiniMax
-			const { pitch, speed, volume } = hasRefAudio
-				? detectVoiceMetadataForMinimax(await readFile(ref_audioUrl!))
+			const { pitch, speed, volume } = hasRefAudio && ref_audioUrl
+				? detectVoiceMetadataForMinimax(await readFile(ref_audioUrl))
 				: { pitch: 0, speed: 1, volume: 1 };
 
 			const input = {

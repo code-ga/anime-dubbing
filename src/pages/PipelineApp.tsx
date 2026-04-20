@@ -16,6 +16,7 @@ import {
 	runPipeline,
 } from "../utils/pipelineRunner";
 
+// biome-disable-next-line lint/suspicious/noExplicitAny
 export interface PipelineAppProps<PipeLineInput extends z.ZodObject> {
 	pipeline: Pipeline<PipeLineInput, any>;
 	input: z.infer<Pipeline<any, any>["inputType"]>;
@@ -45,7 +46,7 @@ export function PipelineApp<PipeLineInput extends z.ZodObject>({
 	const [isCancelled, setIsCancelled] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const { addLog, clearLogs, logs } = usePipelineLogger();
-	const [logTrigger, setLogTrigger] = useState(0);
+	const [_logTrigger, setLogTrigger] = useState(0);
 
 	const handleKeyDown = (key: KeyEvent) => {
 		if (key.ctrl && key.name === "c") {

@@ -23,6 +23,7 @@ export interface RunPipelineOptions {
 	) => Promise<void>;
 }
 
+// biome-disable-next-line lint/suspicious/noExplicitAny
 export async function runPipeline<Input extends z.ZodObject>(
 	pipeline: Pipeline<Input, any>,
 	pipelineArgs: PipelineArgs<Input>,
@@ -69,7 +70,10 @@ export async function runPipeline<Input extends z.ZodObject>(
 			logger.debug(
 				`Parsed input for step ${stepIndex}: ${JSON.stringify(parsedInput)}`,
 			);
-			const step = pipeline.steps[stepIndex]!;
+			const step = pipeline.steps[stepIndex];
+			if (!step) {
+				throw new Error(`Step ${stepIndex} not found`);
+			}
 			logger.debug(`Running step ${stepIndex}: ${step.name}`);
 			lastOutput = await step.handler({
 				input: parsedInput,
