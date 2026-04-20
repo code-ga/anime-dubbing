@@ -15,17 +15,70 @@ A terminal-based user interface application for anime dubbing pipelines, built w
 
 ## Installation
 
+### Prerequisites
+
+- [Bun](https://bun.sh/) (v1.0+) - JavaScript runtime and package manager
+- [FFmpeg](https://ffmpeg.org/) - Media file converter (bundled automatically via ffmpeg-static)
+
+### 1. Install Dependencies
+
 ```bash
 bun install
 ```
+
+### 2. Configure Environment Variables
+
+**Security Note:** The `.env` file is ignored by git (see `.gitignore`) to prevent accidentally committing secrets. Never commit your actual API keys.
+
+1. Copy the template: `cp .env.example .env`
+2. Edit `.env` and add your `REPLICATE_API_TOKEN` and `HACK_CLUB_AI_API_KEY`.
+   - `REPLICATE_API_TOKEN` from [replicate.com](https://replicate.com/) (or use HackClub proxy)
+   - `HACK_CLUB_AI_API_KEY` from [ai.hackclub.com](https://ai.hackclub.com/)
+3. Keep the file private - never commit `.env` to version control.
+
+The other variables are optional and have sensible defaults.
+
+**Environment Variables:**
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `REPLICATE_API_TOKEN` | Yes | API token for Replicate (transcription & TTS) | - |
+| `HACK_CLUB_AI_API_KEY` | Yes | API key for OpenRouter/HackClub AI (translation) | - |
+| `REPLICATE_BASE_URL` | No | Custom Replicate API endpoint | `https://ai.hackclub.com/proxy/v1/replicate` |
+| `HACK_CLUB_AI_BASE_URL` | No | Custom OpenRouter-compatible endpoint | `https://ai.hackclub.com/proxy/v1` |
+| `HF_TOKEN` | No | HuggingFace token for speaker diarization (feature disabled by default) | - |
 
 ## Usage
 
 ### Run the dubbing command
 
+**Development mode (with Bun):**
 ```bash
 bun run src/index.tsx dubbing --inputFile <video_file> --outputFile <output_file>
 ```
+
+**Production (after building):**
+```bash
+# Windows
+.\anime-dubbing.exe dubbing -i <video_file> -o <output_file>
+
+# Linux/macOS
+./anime-dubbing dubbing -i <video_file> -o <output_file>
+```
+
+**Example (with all options):**
+```bash
+.\anime-dubbing.exe dubbing ^
+  -i .\sample\test.mp4 ^
+  -t .\tmp\pipeline\tmp\ ^
+  -o .\tmp\pipeline\output\out.mp4 ^
+  -s ja ^
+  -l en ^
+  -S .\tmp\pipeline\output\subtitle ^
+  --tts-mode "minimax"
+```
+
+*(Use `\` for line continuation on Windows or `\` on Unix-like systems)*
 
 ### Dubbing Options
 
@@ -89,8 +142,22 @@ anime-dubbing/
 
 ## Requirements
 
-- [Bun](https://bun.sh/) - JavaScript runtime and package manager
-- [FFmpeg](https://ffmpeg.org/) - Media file converter (included via ffmpeg-static)
+### Software
+- [Bun](https://bun.sh/) (v1.0+) - JavaScript runtime and package manager
+- [FFmpeg](https://ffmpeg.org/) - Media processing (bundled via `ffmpeg-static`)
+
+### API Credentials
+
+Two API tokens are required:
+
+- `REPLICATE_API_TOKEN` from [replicate.com](https://replicate.com/) for transcription and TTS services.
+- `HACK_CLUB_AI_API_KEY` from [ai.hackclub.com](https://ai.hackclub.com/) for translation via OpenRouter.
+
+The application uses HackClub's proxy to access these models.
+
+### Environment Variables
+
+See the [Installation](#installation) section for the full list of configurable environment variables.
 
 ## Development
 
@@ -98,28 +165,97 @@ anime-dubbing/
 # Run in development mode with watch
 bun run dev
 
-# Run in production
+# Run in production (direct execution)
 bun run start
 
 # Type check
 bun run typecheck
 
-# Lint
+# Lint code
 bun run lint
-
-# Build to executable
-bun build src/index.tsx --outfile anime-dubbing.exe --compile
 ```
 
-## Build
+For building distributable executables, see **[Build & Distribution](#build--distribution)**.
 
-### Build to Executable
+## Build & Distribution
+
+### Create Standalone Executable
+
+Build a single executable that bundles Bun runtime and all dependencies:
 
 ```bash
+# Windows (default target)
 bun build src/index.tsx --outfile anime-dubbing.exe --compile
+
+# Linux
+bun build src/index.tsx --outfile anime-dubbing --compile --target bun-linux-x64
+
+# macOS (Intel)
+bun build src/index.tsx --outfile anime-dubbing --compile --target bun-macos-x64
+
+# macOS (Apple Silicon)
+bun build src/index.tsx --outfile anime-dubbing --compile --target bun-macos-arm64
+
+# Cross-compile for multiple platforms (requires Docker)
+bun build src/index.tsx --outfile anime-dubbing --compile --target bun-linux-x64
 ```
 
-See [BUILD.md](BUILD.md) for detailed build instructions and cross-compilation.
+**Build Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--outfile` | Output executable name |
+| `--compile` | Create standalone executable (bundles Bun runtime) |
+| `--minify` | Minify output to reduce size |
+| `--target` | Target platform (bun-windows-x64, bun-linux-x64, bun-macos-x64, bun-macos-arm64) |
+
+### Bundle Size
+
+The standalone executable includes:
+- Bun runtime (~60 MB)
+- FFmpeg static binary (~40 MB)
+- All JavaScript dependencies
+
+Total size: ~100-120 MB (before minification). Use `--minify` to reduce size by ~30%.
+
+### Distribution
+
+After building, distribute the executable along with:
+- The `.env.example` template (users must create their own `.env` with `REPLICATE_API_TOKEN` and `HACK_CLUB_AI_API_KEY`)
+- Any required runtime libraries (none for standalone builds)
+
+**Example distribution structure:**
+```
+anime-dubbing/
+├── anime-dubbing.exe      # Built executable (Windows)
+├── .env.example           # Environment template
+├── README.md              # This file
+└── LICENSE
+```
+
+**Running the packaged app:**
+```bash
+# Windows
+.\anime-dubbing.exe dubbing --inputFile video.mp4 --outputFile output.mp4
+
+# Linux/macOS
+./anime-dubbing dubbing --inputFile video.mp4 --outputFile output.mp4
+```
+
+### Troubleshooting Build Issues
+
+**FFmpeg binary not found:**
+The `ffmpeg-static` package bundles FFmpeg automatically. If missing, reinstall:
+```bash
+bun install ffmpeg-static --save
+```
+
+**Cross-compilation fails:**
+Some native modules may need rebuilding for the target platform. Clean and rebuild:
+```bash
+bun pm cache -g
+bun build src/index.tsx --outfile anime-dubbing --compile --target <platform>
+```
 
 ## License
 

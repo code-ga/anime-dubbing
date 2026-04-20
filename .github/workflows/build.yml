@@ -30,6 +30,12 @@ jobs:
       - name: Build executable
         run: bun build src/index.tsx --compile --outfile anime-dubbing.exe
 
+      - name: Publish to npm
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
+          bun pm publish --access public
+
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2

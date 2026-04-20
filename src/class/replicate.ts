@@ -34,11 +34,11 @@ interface ReplicateWhisperOutput {
 export class ReplicateUtil {
 	constructor(
 		public replicate = new Replicate({
-			baseUrl: "https://ai.hackclub.com/proxy/v1/replicate",
+			baseUrl: process.env.REPLICATE_BASE_URL || "https://ai.hackclub.com/proxy/v1/replicate",
 		}),
 		public hackclub = createOpenRouter({
 			apiKey: process.env.HACK_CLUB_AI_API_KEY,
-			baseUrl: "https://ai.hackclub.com/proxy/v1",
+			baseUrl: process.env.HACK_CLUB_AI_BASE_URL || "https://ai.hackclub.com/proxy/v1",
 		}),
 	) {}
 

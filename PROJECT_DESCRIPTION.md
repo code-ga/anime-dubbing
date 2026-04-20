@@ -12,7 +12,14 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 
 ### package.json
 - Project configuration with bun as package manager
-- Scripts: dev, start, start:headless, typecheck, lint
+- Scripts: dev, start, typecheck, lint
+- `bin` field defines `anime-dubbing` CLI entry point pointing to `src/index.tsx`
+
+### .env.example
+- Template file for required environment variables (first-time setup)
+- Contains placeholder values for `REPLICATE_API_TOKEN` and `HACK_CLUB_AI_API_KEY`
+- Users copy to `.env` and fill in actual credentials before first run
+- Documented in README with detailed descriptions of each variable
 
 ### src/utils/logger.ts
 - Logger utility that writes to `logs/app.log` file
@@ -393,6 +400,8 @@ User runs: bun run src/index.tsx dubbing --inputFile video.mp4 --tmpDirectory ./
 - Replaced buggy batched TTS merging logic with \processAndMergeDubbedAudio\ (2026-04-18): now computes target durations properly to change speed, generates a continuous timeline using the ffmpeg concat demuxer to avoid CLI length limits, ensures alignment with original timestamps by padding silence, adding 5ms fade in/fade out to each voice segment, and uses amix to merge original audio (at 25% volume) with the composed dubbed track (100% volume).
 - Cleaned up legacy dead code (removed commented out isolation step, deleted unused ffmpeg helper functions) in dubbing.ts and ffmpeg.ts (2026-04-18).
 - Added GitHub Actions workflow for building Windows executable and releasing (2026-04-20).
+- Added `.env.example` template file for first-time setup with instructions in README (2026-04-20).
+- Updated README with comprehensive environment variable documentation and Build & Distribution guide (2026-04-20).
 
 ## Building and Release
 
@@ -421,4 +430,16 @@ The project uses GitHub Actions to build and release:
    git tag v1.0.0
    git push origin v1.0.0
    ```
-2. The workflow will automatically run, build the exe, and create a release on GitHub.
+2. The workflow will automatically run, build the exe, publish to npm, and create a release on GitHub.
+
+### Running via bun x
+After publishing to npm, users can run the tool without installing:
+```bash
+bun x anime-dubbing dubbing --inputFile video.mp4 --outputFile dubbed.mp4
+```
+
+Or install globally:
+```bash
+bun add -g anime-dubbing
+anime-dubbing dubbing --inputFile video.mp4
+```
