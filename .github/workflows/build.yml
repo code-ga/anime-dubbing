@@ -15,9 +15,9 @@ jobs:
           - os: windows-latest
             artifact: anime-dubbing.exe
           - os: ubuntu-latest
-            artifact: anime-dubbing
+            artifact: anime-dubbing-linux
           - os: macos-latest
-            artifact: anime-dubbing
+            artifact: anime-dubbing-maxcos
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
