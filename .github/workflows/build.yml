@@ -40,11 +40,11 @@ jobs:
       - name: Build executable
         run: bun build src/index.tsx --compile --outfile ${{ matrix.artifact }}
 
-      - name: Publish to npm
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
-          bun publish --access public
+      # - name: Publish to npm
+      #   if: startsWith(github.ref, 'refs/tags/')
+      #   run: |
+      #     echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
+      #     bun publish --access public
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
