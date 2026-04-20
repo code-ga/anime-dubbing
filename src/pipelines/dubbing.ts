@@ -36,6 +36,8 @@ const dubbingPipeline = definePipeline({
 		dubbedVolume: z.number().min(0).max(1).default(1.0),
 		ttsMode: z.enum(["auto", "qwen", "minimax"]).default("auto"),
 		voiceClone: z.boolean().default(true),
+		minSpeed: z.number().min(0.5).max(2.0).default(0.5),
+		maxSpeed: z.number().min(0.5).max(2.0).default(2.0),
 	}),
 	outputType: z.object({
 		outputFile: z.string().describe("Output file for the dubbed video"),
@@ -202,6 +204,7 @@ const dubbingPipeline = definePipeline({
 					context.args.sourceLanguage as string,
 				);
 
+				// Create a mapping of original index to translated text
 				const result: TranscriptionWithRef[] = transcriptions.map(
 					(t, index) => ({
 						...t,
@@ -209,6 +212,12 @@ const dubbingPipeline = definePipeline({
 						text: translated[index]?.translated || t.text,
 					}),
 				);
+
+				// Log if any segments were skipped by LLM
+				const skippedCount = result.filter(t => !translated.find((tr, i) => i === result.indexOf(t) && tr.translated)).length;
+				if (skippedCount > 0) {
+					logger.warn(`${skippedCount} segments were potentially skipped or missing from translation output.`);
+				}
 
 				logger.debug(
 					"Translate Transcript step: translated = ",
@@ -337,13 +346,69 @@ const dubbingPipeline = definePipeline({
 					originalDuration?: number;
 				}[] = [];
 
+				// Track which segments have been "consumed" by sharing
+				const consumedIndices = new Set<number>();
+
 				for (let i = 0; i < transcriptions.length; i++) {
 					const t = transcriptions[i];
-					if (!t) continue;
+					if (!t || consumedIndices.has(i)) continue;
+
+					const translation = t.text;
+					const isMissing = !translation || translation === t.originalText;
+
+					if (isMissing) {
+						// This segment was skipped or untranslated.
+						// Duration sharing logic:
+						let sharedWithIdx = -1;
+
+						// Try sharing with previous neighbor if it's "short" (< 1.5s)
+						if (i > 0) {
+							const prevSeg = audioFiles[audioFiles.length - 1];
+							if (prevSeg && prevSeg.originalDuration && prevSeg.originalDuration < 1.5) {
+								sharedWithIdx = i - 1;
+							}
+						}
+
+						// If not shared with previous, try sharing with next neighbor if it's "short" (< 1.5s)
+						if (sharedWithIdx === -1 && i < transcriptions.length - 1) {
+							const nextT = transcriptions[i + 1];
+							if (nextT && (nextT.end - nextT.start) < 1.5) {
+								sharedWithIdx = i + 1;
+							}
+						}
+
+						if (sharedWithIdx !== -1) {
+							const extraDuration = t.end - t.start;
+							if (sharedWithIdx < i) {
+								// Shared with previous: already in audioFiles
+								const prev = audioFiles[audioFiles.length - 1];
+								if (prev) {
+									logger.info(`Sharing duration of skipped segment ${i} (${extraDuration.toFixed(2)}s) with previous segment ${sharedWithIdx}`);
+									prev.originalDuration = (prev.originalDuration || 0) + extraDuration;
+								}
+								continue;
+							} else {
+								// Shared with next: will be handled in next iteration or by modifying transcriptions[i+1]
+								const next = transcriptions[i + 1];
+								if (next) {
+									logger.info(`Sharing duration of skipped segment ${i} (${extraDuration.toFixed(2)}s) with next segment ${sharedWithIdx}`);
+									next.start = t.start; // Extend next segment to start where this one started
+									// originalDuration will be calculated naturally as next.end - next.start
+								}
+								continue;
+							}
+						}
+
+						// If not shared, it remains as silence (gap) in the final merge.
+						logger.info(`Segment ${i} remains as silence (skipped by LLM and no suitable neighbor for sharing).`);
+						continue;
+					}
+
 					const refAudioUrl =
 						t.ref_audio && t.ref_audio.trim() !== ""
 							? t.ref_audio
 							: firstValidRefAudio;
+
 					logger.debug(
 						`Generating dubbed audio for segment ${i + 1}/${transcriptions.length}`,
 					);
@@ -366,7 +431,7 @@ const dubbingPipeline = definePipeline({
 					audioFiles.push({
 						path: outputPath,
 						startTime: t.start,
-						originalDuration: t.end - t.start, // store original segment duration
+						originalDuration: t.end - t.start,
 					});
 				}
 
@@ -418,6 +483,8 @@ const dubbingPipeline = definePipeline({
 					tmpDir,
 					context.args.backgroundVolume as number,
 					context.args.dubbedVolume as number,
+					input.minSpeed,
+					input.maxSpeed,
 				);
 
 				logger.debug(`Mixed audio to: ${mergedPath}`);

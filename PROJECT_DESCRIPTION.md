@@ -105,12 +105,12 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 2. "Convert to WAV" - Convert video audio to WAV format using FFmpeg
 3. "Detect and Split by Silence" - Split audio at silence points using FFmpeg silencedetect
 4. "Seperate Speech from Audio" - Placeholder (pass-through); originally intended for speech isolation using SAM-audio-large
-5. "Transcribe Audio" - Convert speech to text using Whisper via Replicate; outputs transcriptions with timing (start/end) and reference audio segment paths
-6. "Translate Transcript" - Translate text to target language using LLM (OpenRouter/Hack Club AI); outputs translated transcriptions with original text preserved
+5. "Transcribe Audio" - Convert speech to text using Whisper via Replicate; outputs transcriptions with timing (start/end) and reference audio
+6. "Translate Transcript" - Translate text to target language using LLM (Qwen-32B); uses an indexed prompt format (`[Index] Text`) to ensure reliability and prevent the "domino effect" of misaligned segments; parses response with regex to match translations back to original indices.
 7. "Save Subtitles to SRT" - If `subtitleDirectory` provided, saves original.srt and translated.srt; otherwise skips
-8. "Generate Dubbed Audio" - Generate TTS audio for each translated segment using ReplicateUtil.generateVoice(); supports user-selected TTS provider (`auto`, `qwen`, or `minimax`) and `voiceClone` toggle; outputs `{ path, startTime, originalDuration }` for each segment
-9. "Merge Segments to Single Audio" - Mix TTS segments with original background audio using `mixTtsWithOriginalAudioBatched()`: background volume reduced to 25%, TTS positioned at original timestamps with 5ms fade in/out, speed-adjusted to match segment durations via atempo, all streams converted to stereo for amix compatibility, combines using amix filter; for large numbers of segments (>31), processes in batches to avoid FFmpeg input limits; cleans up temp files; output: `tmpDirectory/dubbed_full.mp3`
-10. "Merge Audio with Video" - Combine dubbed audio with original video using `mergeAudioWithVideo()`; copies video stream (`-c:v copy`), maps audio from second input (`-map 1:a:0`), uses `-shortest`; final output: `input.outputFile` (e.g., output.mp4)
+8. "Generate Dubbed Audio" - Generate TTS audio for each translated segment; implements **duration sharing logic**: if a segment is skipped by the LLM, its duration is merged into a neighboring short segment (< 1.5s) to allow for more natural speech rate; otherwise, it remains as silence.
+9. "Merge Segments to Single Audio" - Mix TTS segments with original background audio using `processAndMergeDubbedAudio()`: supports `minSpeed` and `maxSpeed` limits (configurable via CLI) to prevent extreme voice distortion; background volume reduced to 25%, TTS positioned at original timestamps with 5ms fade in/out; uses ffmpeg concat demuxer for timeline composition.
+10. "Merge Audio with Video" - Combine dubbed audio with original video using `mergeAudioWithVideo()`; copies video stream (`-c:v copy`), maps audio from second input (`-map 1:a:0`), uses `-shortest`.
 - Output: `outputFile` (path to final dubbed video)
 - Checkpoint-aware: Adding steps changes step count; existing checkpoints reset from step 0 (handled by `loadCheckpoint` step name validation)
 
@@ -204,6 +204,8 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
   - `dubbedVolume` (default: 1.0, `-v`)
   - `ttsMode` (default: `auto`, `-m`, choices: `auto`, `qwen`, `minimax`)
   - `voiceClone` (default: `true`, `-c`, boolean)
+  - `minSpeed` (default: 0.5, `--min`)
+  - `maxSpeed` (default: 2.0, `--max`)
 - Creates ReplicateUtil instance and passes via args prop to PipelineApp
 - Loads checkpoint from tmpDirectory and passes to PipelineApp for resume support
 - Renders PipelineApp with renderToCli for TUI display
@@ -390,3 +392,33 @@ User runs: bun run src/index.tsx dubbing --inputFile video.mp4 --tmpDirectory ./
 - Added checkpoint recovery from step errors - when a step fails, checkpoint is saved with error status, allowing re-run to resume from the failed step (2026-04-17)
 - Replaced buggy batched TTS merging logic with \processAndMergeDubbedAudio\ (2026-04-18): now computes target durations properly to change speed, generates a continuous timeline using the ffmpeg concat demuxer to avoid CLI length limits, ensures alignment with original timestamps by padding silence, adding 5ms fade in/fade out to each voice segment, and uses amix to merge original audio (at 25% volume) with the composed dubbed track (100% volume).
 - Cleaned up legacy dead code (removed commented out isolation step, deleted unused ffmpeg helper functions) in dubbing.ts and ffmpeg.ts (2026-04-18).
+- Added GitHub Actions workflow for building Windows executable and releasing (2026-04-20).
+
+## Building and Release
+
+### Local Build
+To build the executable locally:
+```bash
+bun build src/index.tsx --compile --outfile anime-dubbing.exe
+```
+This creates a standalone Windows executable `anime-dubbing.exe`.
+
+### Release Workflow
+The project uses GitHub Actions to build and release:
+- **Trigger**: Push a tag starting with `v` (e.g., `v1.0.0`)
+- **Process**:
+  1. Checkout code
+  2. Setup Bun
+  3. Install dependencies
+  4. Run typecheck (`bun run typecheck`)
+  5. Run lint (`bun run lint`)
+  6. Build executable using `bun build --compile`
+  7. Create GitHub release with the exe as an asset
+
+### Creating a Release
+1. Create and push a tag:
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+2. The workflow will automatically run, build the exe, and create a release on GitHub.

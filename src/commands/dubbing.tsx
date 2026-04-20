@@ -59,6 +59,14 @@ export const dubbing = defineCommand({
 				.boolean()
 				.describe("Whether to use voice cloning (requires ref audio)")
 				.default(true),
+			minSpeed: z
+				.number()
+				.describe("Minimum speed factor for audio (0.5-2.0)")
+				.default(0.5),
+			maxSpeed: z
+				.number()
+				.describe("Maximum speed factor for audio (0.5-2.0)")
+				.default(2.0),
 		}),
 		{
 			i: "inputFile",
@@ -71,6 +79,8 @@ export const dubbing = defineCommand({
 			v: "dubbedVolume",
 			m: "ttsMode",
 			c: "voiceClone",
+			min: "minSpeed",
+			max: "maxSpeed",
 		},
 	),
 	action: async (options) => {
@@ -104,6 +114,8 @@ export const dubbing = defineCommand({
 					dubbedVolume: options.dubbedVolume,
 					ttsMode: options.ttsMode,
 					voiceClone: options.voiceClone,
+					minSpeed: options.minSpeed,
+					maxSpeed: options.maxSpeed,
 				}}
 				outputFile={options.outputFile}
 				checkpoint={checkpoint}

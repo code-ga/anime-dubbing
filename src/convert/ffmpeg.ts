@@ -97,9 +97,11 @@ export async function processAndMergeDubbedAudio(
 	tmpDir: string,
 	backgroundVolume: number = 0.25,
 	dubbedVolume: number = 1.0,
+	minSpeed: number = 0.5,
+	maxSpeed: number = 2.0,
 ): Promise<string> {
 	logger.debug(
-		`processAndMergeDubbedAudio: mixing ${ttsSegments.length} TTS segments with original audio`,
+		`processAndMergeDubbedAudio: mixing ${ttsSegments.length} TTS segments with original audio (minSpeed: ${minSpeed}, maxSpeed: ${maxSpeed})`,
 	);
 
 	if (ttsSegments.length === 0) {
@@ -137,8 +139,20 @@ export async function processAndMergeDubbedAudio(
 					speedFactor = dubbedDuration / originalDuration;
 				}
 
-				const targetDuration =
-					originalDuration > 0 ? originalDuration : dubbedDuration;
+				// Clamp speed factor
+				if (speedFactor > maxSpeed) {
+					logger.warn(
+						`Segment ${index} speed factor (${speedFactor.toFixed(3)}) exceeds maxSpeed (${maxSpeed}). Clamping.`,
+					);
+					speedFactor = maxSpeed;
+				} else if (speedFactor < minSpeed) {
+					logger.warn(
+						`Segment ${index} speed factor (${speedFactor.toFixed(3)}) below minSpeed (${minSpeed}). Clamping.`,
+					);
+					speedFactor = minSpeed;
+				}
+
+				const targetDuration = dubbedDuration / speedFactor;
 
 				const filterArr: string[] = [];
 

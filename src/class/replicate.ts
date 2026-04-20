@@ -6,6 +6,7 @@ import { type LanguageCode } from "../types/language";
 import {
 	getLanguageNameForTranslation,
 	getTTSProvider,
+	normalizeLanguageName,
 } from "../utils/language";
 import { logger } from "../utils/logger";
 import { detectVoiceMetadataForMinimax } from "../utils/voice";
@@ -69,14 +70,27 @@ export class ReplicateUtil {
 		const audio = audioUrl.startsWith("http")
 			? audioUrl
 			: `data:audio/wav;base64,${(await readFile(audioUrl)).toString("base64")}`;
-		logger.debug(`Transcribing audio: ${audioUrl} with Replicate API`);
+		logger.debug(
+			`Transcribing audio: ${audioUrl} with Replicate API with source language ${
+				sourceLanguage !== "None"
+					? getLanguageNameForTranslation(
+							sourceLanguage as LanguageCode,
+						).toLowerCase()
+					: "auto"
+			}`,
+		);
 		const output = await this.replicate.run(
 			"vaibhavs10/incredibly-fast-whisper:3ab86df6c8f54c11309d4d1f930ac292bad43ace52d10c80d87eb258b3c9f79c",
 			{
 				input: {
 					task: "transcribe",
 					audio: audio,
-					language: sourceLanguage !== "None" ? sourceLanguage : undefined,
+					language:
+						sourceLanguage !== "None"
+							? getLanguageNameForTranslation(
+									sourceLanguage as LanguageCode,
+								).toLowerCase()
+							: undefined,
 					timestamp: "chunk",
 					batch_size: 64,
 					// diarise_audio: true,
@@ -104,7 +118,10 @@ export class ReplicateUtil {
 	): Promise<(T & { translated: string })[]> {
 		if (transcriptions.length === 0) return [];
 
-		const textToTranslate = transcriptions.map((t) => t.text).join("\n");
+		// Format text with indices: [1] Text\n[2] Text...
+		const textToTranslate = transcriptions
+			.map((t, i) => `[${i + 1}] ${t.text}`)
+			.join("\n");
 
 		const targetLangCode = targetLanguage as LanguageCode;
 		const sourceLangCode = sourceLanguage as LanguageCode;
@@ -115,7 +132,15 @@ export class ReplicateUtil {
 				? "the original language"
 				: getLanguageNameForTranslation(sourceLangCode);
 
-		const systemPrompt = `You are a professional translator specializing in anime and media content. Translate the following text from ${sourceLang} to ${targetLang}. Preserve the meaning, tone, and context as naturally as possible. Only output the translated text, no explanations.`;
+		const systemPrompt = `You are a professional translator specializing in anime and media content. 
+Translate the following text from ${sourceLang} to ${targetLang}. 
+Preserve the meaning, tone, and context as naturally as possible. 
+
+IMPORTANCE: 
+- You MUST preserve the indices in brackets at the beginning of each line exactly as they appear in the input.
+- Output format: [Index] Translated Text
+- Only output the translated segments, no preamble or extra explanations.
+- If a segment should not be translated (e.g. background noise), output the original index with an empty content or the original text.`;
 
 		const { text: translatedText } = await generateText({
 			model: this.hackclub("qwen/qwen3-32b"),
@@ -123,17 +148,29 @@ export class ReplicateUtil {
 			system: systemPrompt,
 		});
 
-		logger.debug("Translated text: ", translatedText);
+		logger.debug("Translated text raw output: ", translatedText);
 
-		const translatedChunks = translatedText
-			.split("\n")
-			.filter((chunk) => chunk.trim() !== "");
+		// Parse output using matchAll to extract [Index] Content
+		const translatedMap = new Map<number, string>();
+		for (const match of translatedText.matchAll(/\[(\d+)\]\s*(.*)/g)) {
+			const indexStr = match[1];
+			const content = match[2];
+			if (indexStr !== undefined && content !== undefined) {
+				const index = parseInt(indexStr, 10) - 1; // Convert back to 0-based
+				translatedMap.set(index, content.trim());
+			}
+		}
 
 		const result: (T & { translated: string })[] = transcriptions.map(
-			(transcription, index) => ({
-				...transcription,
-				translated: translatedChunks[index] || transcription.text,
-			}),
+			(transcription, index) => {
+				const translated = translatedMap.get(index);
+				return {
+					...transcription,
+					translated:
+						translated !== undefined ? translated : transcription.text,
+					// We'll handle the "empty" or "skipped" logic in the pipeline step
+				};
+			},
 		);
 
 		return result;
@@ -156,7 +193,8 @@ export class ReplicateUtil {
 	}): Promise<Buffer> {
 		const langCode = language as LanguageCode;
 		const provider = getTTSProvider(langCode, ttsProvider);
-		const hasRefAudio = voiceClone && ref_audioUrl && ref_audioUrl.trim() !== "";
+		const hasRefAudio =
+			voiceClone && ref_audioUrl && ref_audioUrl.trim() !== "";
 
 		logger.info(
 			`Generating voice: provider=${provider}, cloning=${hasRefAudio}, language=${language}`,
@@ -180,7 +218,7 @@ export class ReplicateUtil {
 
 			const output = (await this.replicate.run("qwen/qwen3-tts", {
 				input,
-			})) as any;
+			})) as Buffer;
 			return output;
 		} else {
 			// MiniMax
@@ -204,10 +242,9 @@ export class ReplicateUtil {
 
 			const output = (await this.replicate.run("minimax/speech-02-turbo", {
 				input,
-			})) as any;
+			})) as Buffer;
 
 			return output;
 		}
 	}
 }
-
