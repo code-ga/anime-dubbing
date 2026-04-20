@@ -8,7 +8,17 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: anime-dubbing.exe
+          - os: ubuntu-latest
+            artifact: anime-dubbing
+          - os: macos-latest
+            artifact: anime-dubbing
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     
@@ -28,19 +38,19 @@ jobs:
         run: bun run typecheck
 
       - name: Build executable
-        run: bun build src/index.tsx --compile --outfile anime-dubbing.exe
+        run: bun build src/index.tsx --compile --outfile ${{ matrix.artifact }}
 
       - name: Publish to npm
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
-          bun pm publish --access public
+          bun publish --access public
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: anime-dubbing.exe
+          files: ${{ matrix.artifact }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
