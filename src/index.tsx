@@ -1,6 +1,9 @@
 /// <reference types="node" />
 import { defineConfig, processConfig } from "@robingenz/zli";
 import * as commands from "./commands";
+import { config as dontenvConfig } from "dotenv";
+
+dontenvConfig();
 
 // Configure the CLI
 const config = defineConfig({

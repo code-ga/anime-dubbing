@@ -34,7 +34,11 @@ export const dubbing = defineCommand({
 			sourceLanguage: z
 				.string()
 				.describe("Source language of the audio")
-				.default("None"),
+				.default("None")
+				.refine(
+					(val) => (SUPPORTED_LANGUAGES as string[]).includes(val),
+					`Invalid source language. Supported: ${SUPPORTED_LANGUAGES.join(", ")}`,
+				),
 			subtitleDirectory: z
 				.string()
 				.describe("Directory to save SRT subtitle files")
