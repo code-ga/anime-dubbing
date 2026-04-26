@@ -202,7 +202,7 @@ IMPORTANCE:
 		if (provider === "qwen") {
 			const input = hasRefAudio && ref_audioUrl
 				? {
-						mode: "voice_cloning",
+						mode: "voice_clone",
 						text,
 						language: "auto",
 						reference_audio: ref_audioUrl.startsWith("http")
