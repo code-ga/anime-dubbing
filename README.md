@@ -2,6 +2,10 @@
 
 A terminal-based user interface application for anime dubbing pipelines, built with [OpenTUI](https://github.com/opentui/opentui).
 
+# Important limitation
+- Currently, the tts model isn't working well with music. i think that you should using this tool with podcast or speech only video for archive the best result.
+- Also i recommend you using minimax tts (currently is default config) for the predictable result because qwen-tts sometime crashing and output unpredictable audio quality
+- Sometimes the errors might cause by your api balance so i recommend you using small video to test (to know how much you should spend for that length of video) before using on long video (about 2$/minute)
 ## Features
 
 - **Pipeline System**: Execute 10-step dubbing pipelines with real-time progress tracking

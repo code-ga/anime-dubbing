@@ -239,7 +239,7 @@ IMPORTANCE:
 				english_normalization: true,
 			};
 
-			const output = (await this.replicate.run("minimax/speech-02-turbo", {
+			const output = (await this.replicate.run("minimax/speech-2.8-turbo", {
 				input,
 			})) as Buffer;
 

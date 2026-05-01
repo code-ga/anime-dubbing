@@ -58,7 +58,7 @@ export const dubbing = defineCommand({
 			ttsMode: z
 				.enum(["auto", "qwen", "minimax"])
 				.describe("TTS model to use (auto, qwen, minimax)")
-				.default("auto"),
+				.default("minimax"),
 			voiceClone: z
 				.boolean()
 				.describe("Whether to use voice cloning (requires ref audio)")
