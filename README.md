@@ -36,7 +36,7 @@ bun install
 
 1. Copy the template: `cp .env.example .env`
 2. Edit `.env` and add your `REPLICATE_API_TOKEN` and `HACK_CLUB_AI_API_KEY`.
-   - `REPLICATE_API_TOKEN` from [replicate.com](https://replicate.com/) (or use HackClub proxy)
+   - `REPLICATE_API_TOKEN` from [replicate.com](https://replicate.com/) (or use [HackClub Ai proxy](https://docs.ai.hackclub.com/guide/replicate.html) (extreme recommendation solution))
    - `HACK_CLUB_AI_API_KEY` from [ai.hackclub.com](https://ai.hackclub.com/)
 3. Keep the file private - never commit `.env` to version control.
 
