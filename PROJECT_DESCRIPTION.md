@@ -108,7 +108,7 @@ Anime dubbing application built with OpenTUI for terminal-based user interfaces.
 - Exports all pipeline definitions
 
 ### Pipeline Steps (Dubbing)
-1. "Setup Environment" - Initialize pipeline environment
+1. "Setup Environment" - Validate environment setup including checking required environment variables (HACK_CLUB_AI_API_KEY), verifying FFmpeg installation, creating necessary directory structure (tmpDirectory, dubbed_audio, ref_audio subdirectories), and ensuring ReplicateUtil instance is available
 2. "Convert to WAV" - Convert video audio to WAV format using FFmpeg
 3. "Detect and Split by Silence" - Split audio at silence points using FFmpeg silencedetect
 4. "Seperate Speech from Audio" - Placeholder (pass-through); originally intended for speech isolation using SAM-audio-large

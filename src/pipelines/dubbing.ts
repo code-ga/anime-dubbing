@@ -1,8 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { execSync } from "node:child_process";
 import path from "node:path";
 import { inspect } from "node:util";
 import z from "zod";
-import type { ReplicateUtil } from "../class/replicate";
+import { ReplicateUtil } from "../class/replicate";
 import {
 	convertToWav,
 	mergeAudioWithVideo,
@@ -15,9 +16,7 @@ import {
 	splitAudioByTimeWithRef,
 	type TranscriptionWithRef,
 } from "../utils/audioSplit";
-import {
-	isQwenTTSSupported,
-} from "../utils/language";
+import { isQwenTTSSupported } from "../utils/language";
 import { logger } from "../utils/logger";
 
 const dubbingPipeline = definePipeline({
@@ -49,6 +48,53 @@ const dubbingPipeline = definePipeline({
 				"Setup the environment for the pipeline, including checking for necessary tools and dependencies.",
 			handler: async ({ input, context }) => {
 				context.signal?.throwIfAborted();
+
+				// Check required environment variables
+				if (!process.env.HACK_CLUB_AI_API_KEY) {
+					throw new Error(
+						"HACK_CLUB_AI_API_KEY environment variable is required",
+					);
+				}
+
+				if (!process.env.REPLICATE_API_TOKEN) {
+					throw new Error(
+						"REPLICATE_API_TOKEN environment variable is required",
+					);
+				}
+
+				// Check tmpDirectory
+				const tmpDir = context.args.tmpDirectory as string;
+				if (!tmpDir) {
+					throw new Error("tmpDirectory is required");
+				}
+
+				// Create main tmp directory structure
+				await mkdir(tmpDir, { recursive: true });
+				await mkdir(path.join(tmpDir, "dubbed_audio"), { recursive: true });
+				await mkdir(path.join(tmpDir, "ref_audio"), { recursive: true });
+
+				// Check ffmpeg availability
+				try {
+					execSync("ffmpeg -version", { stdio: "pipe" });
+					logger.info("FFmpeg is available");
+				} catch (error) {
+					throw new Error("FFmpeg is not installed or not available in PATH");
+				}
+
+				// Test ReplicateUtil
+				const replicateUtil = (context.args as any)
+					.replicateUtil as ReplicateUtil;
+				if (!replicateUtil) {
+					throw new Error("ReplicateUtil not provided in context args");
+				} else if (!(replicateUtil instanceof ReplicateUtil)) {
+					throw new Error(
+						"ReplicateUtil is not an instance of ReplicateUtil",
+					);
+				}
+
+				logger.info("ReplicateUtil instance is available");
+				await replicateUtil.validateClient();
+				logger.info("Environment setup completed successfully");
 				return { extracted: true, inputFile: input.inputFile };
 			},
 		},
@@ -214,9 +260,16 @@ const dubbingPipeline = definePipeline({
 				);
 
 				// Log if any segments were skipped by LLM
-				const skippedCount = result.filter(t => !translated.find((tr, i) => i === result.indexOf(t) && tr.translated)).length;
+				const skippedCount = result.filter(
+					(t) =>
+						!translated.find(
+							(tr, i) => i === result.indexOf(t) && tr.translated,
+						),
+				).length;
 				if (skippedCount > 0) {
-					logger.warn(`${skippedCount} segments were potentially skipped or missing from translation output.`);
+					logger.warn(
+						`${skippedCount} segments were potentially skipped or missing from translation output.`,
+					);
 				}
 
 				logger.debug(
@@ -364,7 +417,11 @@ const dubbingPipeline = definePipeline({
 						// Try sharing with previous neighbor if it's "short" (< 1.5s)
 						if (i > 0) {
 							const prevSeg = audioFiles[audioFiles.length - 1];
-							if (prevSeg && prevSeg.originalDuration && prevSeg.originalDuration < 1.5) {
+							if (
+								prevSeg &&
+								prevSeg.originalDuration &&
+								prevSeg.originalDuration < 1.5
+							) {
 								sharedWithIdx = i - 1;
 							}
 						}
@@ -372,7 +429,7 @@ const dubbingPipeline = definePipeline({
 						// If not shared with previous, try sharing with next neighbor if it's "short" (< 1.5s)
 						if (sharedWithIdx === -1 && i < transcriptions.length - 1) {
 							const nextT = transcriptions[i + 1];
-							if (nextT && (nextT.end - nextT.start) < 1.5) {
+							if (nextT && nextT.end - nextT.start < 1.5) {
 								sharedWithIdx = i + 1;
 							}
 						}
@@ -383,15 +440,20 @@ const dubbingPipeline = definePipeline({
 								// Shared with previous: already in audioFiles
 								const prev = audioFiles[audioFiles.length - 1];
 								if (prev) {
-									logger.info(`Sharing duration of skipped segment ${i} (${extraDuration.toFixed(2)}s) with previous segment ${sharedWithIdx}`);
-									prev.originalDuration = (prev.originalDuration || 0) + extraDuration;
+									logger.info(
+										`Sharing duration of skipped segment ${i} (${extraDuration.toFixed(2)}s) with previous segment ${sharedWithIdx}`,
+									);
+									prev.originalDuration =
+										(prev.originalDuration || 0) + extraDuration;
 								}
 								continue;
 							} else {
 								// Shared with next: will be handled in next iteration or by modifying transcriptions[i+1]
 								const next = transcriptions[i + 1];
 								if (next) {
-									logger.info(`Sharing duration of skipped segment ${i} (${extraDuration.toFixed(2)}s) with next segment ${sharedWithIdx}`);
+									logger.info(
+										`Sharing duration of skipped segment ${i} (${extraDuration.toFixed(2)}s) with next segment ${sharedWithIdx}`,
+									);
 									next.start = t.start; // Extend next segment to start where this one started
 									// originalDuration will be calculated naturally as next.end - next.start
 								}
@@ -400,7 +462,9 @@ const dubbingPipeline = definePipeline({
 						}
 
 						// If not shared, it remains as silence (gap) in the final merge.
-						logger.info(`Segment ${i} remains as silence (skipped by LLM and no suitable neighbor for sharing).`);
+						logger.info(
+							`Segment ${i} remains as silence (skipped by LLM and no suitable neighbor for sharing).`,
+						);
 						continue;
 					}
 
@@ -468,9 +532,11 @@ const dubbingPipeline = definePipeline({
 				const outputPath = path.join(tmpDir, "dubbed_full.mp3");
 
 				// Get original audio from Step 2 (Convert to WAV output)
-				const originalAudioPath = (context.previousOutputs[1] as {
-					outputFile: string;
-				})?.outputFile as string;
+				const originalAudioPath = (
+					context.previousOutputs[1] as {
+						outputFile: string;
+					}
+				)?.outputFile as string;
 
 				if (!originalAudioPath) {
 					throw new Error("Original audio path not found in previous outputs");
@@ -517,6 +583,5 @@ const dubbingPipeline = definePipeline({
 		},
 	],
 });
-
 
 export default dubbingPipeline;

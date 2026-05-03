@@ -34,13 +34,20 @@ interface ReplicateWhisperOutput {
 export class ReplicateUtil {
 	constructor(
 		public replicate = new Replicate({
-			baseUrl: process.env.REPLICATE_BASE_URL || "https://ai.hackclub.com/proxy/v1/replicate",
+			baseUrl:
+				process.env.REPLICATE_BASE_URL ||
+				"https://ai.hackclub.com/proxy/v1/replicate",
 		}),
 		public hackclub = createOpenRouter({
 			apiKey: process.env.HACK_CLUB_AI_API_KEY,
-			baseUrl: process.env.HACK_CLUB_AI_BASE_URL || "https://ai.hackclub.com/proxy/v1",
+			baseUrl:
+				process.env.HACK_CLUB_AI_BASE_URL || "https://ai.hackclub.com/proxy/v1",
 		}),
 	) {}
+
+	async validateClient() {
+		logger.warn("Cannot checking does Ai api Working correct");
+	}
 
 	async isolationSpeechFromAudio(audioUrl: string) {
 		const audio = audioUrl.startsWith("http")
@@ -200,20 +207,21 @@ IMPORTANCE:
 		);
 
 		if (provider === "qwen") {
-			const input = hasRefAudio && ref_audioUrl
-				? {
-						mode: "voice_clone",
-						text,
-						language: "auto",
-						reference_audio: ref_audioUrl.startsWith("http")
-							? ref_audioUrl
-							: `data:audio/wav;base64,${(await readFile(ref_audioUrl)).toString("base64")}`,
-						reference_text: textInOrginalLanguage,
-					}
-				: {
-						text,
-						language: "auto",
-					};
+			const input =
+				hasRefAudio && ref_audioUrl
+					? {
+							mode: "voice_clone",
+							text,
+							language: "auto",
+							reference_audio: ref_audioUrl.startsWith("http")
+								? ref_audioUrl
+								: `data:audio/wav;base64,${(await readFile(ref_audioUrl)).toString("base64")}`,
+							reference_text: textInOrginalLanguage,
+						}
+					: {
+							text,
+							language: "auto",
+						};
 
 			const output = (await this.replicate.run("qwen/qwen3-tts", {
 				input,
@@ -221,9 +229,10 @@ IMPORTANCE:
 			return output;
 		} else {
 			// MiniMax
-			const { pitch, speed, volume } = hasRefAudio && ref_audioUrl
-				? detectVoiceMetadataForMinimax(await readFile(ref_audioUrl))
-				: { pitch: 0, speed: 1, volume: 1 };
+			const { pitch, speed, volume } =
+				hasRefAudio && ref_audioUrl
+					? detectVoiceMetadataForMinimax(await readFile(ref_audioUrl))
+					: { pitch: 0, speed: 1, volume: 1 };
 
 			const input = {
 				text: text,
