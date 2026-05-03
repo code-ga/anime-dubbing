@@ -52,13 +52,13 @@ const dubbingPipeline = definePipeline({
 				// Check required environment variables
 				if (!process.env.HACK_CLUB_AI_API_KEY) {
 					throw new Error(
-						"HACK_CLUB_AI_API_KEY environment variable is required",
+						"HACK_CLUB_AI_API_KEY environment variable is required \n You can try to google about how to set environment variables in your os",
 					);
 				}
 
 				if (!process.env.REPLICATE_API_TOKEN) {
 					throw new Error(
-						"REPLICATE_API_TOKEN environment variable is required",
+						"REPLICATE_API_TOKEN environment variable is required \n You can try to google about how to set environment variables in your os",
 					);
 				}
 
@@ -78,7 +78,7 @@ const dubbingPipeline = definePipeline({
 					execSync("ffmpeg -version", { stdio: "pipe" });
 					logger.info("FFmpeg is available");
 				} catch (error) {
-					throw new Error("FFmpeg is not installed or not available in PATH");
+					throw new Error("FFmpeg is not installed or not available in PATH \n You can try to google how to install ffmpeg on your os");
 				}
 
 				// Test ReplicateUtil
